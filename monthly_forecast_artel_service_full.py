@@ -1043,16 +1043,17 @@ VAT_MODE = "EXTRACT"
 DATE_SOURCE = "Data of Document"
 TOP_NAMES = 10  # 👈 add this
 def run_analysis(
-    in_files,                          # list[str] - current period file paths
-    prev_file=None,                    # str|None  - previous year file path
-    call_center=0.0,                   # float     - USD (VAT-included)
-    admin_forecast=0.0,                # float     - USD (after VAT)
-    vat_rate=0.12,                     # 0.12 for 12%
-    vat_mode="exclusive",              # or "extract" depending on your code
-    month=None,                        # "YYYY-MM"
-    forecast_nonempty_only=True,
-    no_exclude_sundays=False,
-    out_name=None
+    in_files,
+    prev_file: Optional[str] = None,
+    call_center: float = 0.0,
+    admin_forecast: float = 0.0,
+    vat_rate: float = VAT_RATE,
+    vat_mode: str = VAT_MODE,
+    month: Optional[str] = None,
+    forecast_nonempty_only: bool = True,
+    no_exclude_sundays: bool = False,
+    out_name: Optional[str] = None,
+    prev_month_override: Optional[str] = None,   # <-- ADD THIS
 ):
     """Headless runner for Streamlit. Returns output Excel path."""
     # --- mimic args/config the same way your main() expects ---
@@ -1355,3 +1356,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
