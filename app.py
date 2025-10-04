@@ -4,6 +4,8 @@ import datetime as dt
 import os
 import tempfile
 from monthly_forecast_artel_service_full import main as run_forecast
+# top of app.py
+from monthly_forecast_artel_service_full import run_analysis
 
 st.set_page_config(
     page_title="Artel Monthly Forecast Tool",
@@ -66,21 +68,26 @@ if uploaded_files and st.button("🚀 Run Forecast"):
 
         # Run forecast main()
         try:
-            run_forecast(
+            # IMPORTANT: convert 12.0% -> 0.12
+            output_path = run_analysis(
                 in_files=paths,
-                prev_file=prev_path,
-                call_center=call_center_revenue,
-                admin_forecast=admin_forecast,
-                vat_rate=vat_rate,
-                vat_mode="exclusive",
+                prev_file=prev_path if yoy_option == "Upload Previous-Year File" else None,
+                call_center=float(call_center_revenue),
+                admin_forecast=float(admin_forecast),
+                vat_rate=float(vat_rate) / 100.0,
+                vat_mode="exclusive",          # or your default
                 month=month,
                 forecast_nonempty_only=nonempty_only,
-                no_exclude_sundays=not exclude_sundays
-            )
-            st.success("✅ Forecast completed successfully!")
-            st.markdown("Check your output folder for the generated Excel file.")
+                no_exclude_sundays=not exclude_sundays,
+                out_name="artel_report"
+)
+st.success("✅ Forecast completed!")
+with open(output_path, "rb") as f:
+    st.download_button("⬇️ Download Excel report", f, file_name=os.path.basename(output_path))
+
         except Exception as e:
             st.error(f"❌ Error: {e}")
 
 else:
     st.info("👆 Upload your SAP Excel file(s), then click **Run Forecast**.")
+
