@@ -86,13 +86,15 @@ if run:
                 prev_file=prev_path if yoy_mode == "Upload Previous-Year File" else None,
                 call_center=float(call_center_revenue),
                 admin_forecast=float(admin_forecast),
-                vat_rate=float(vat_percent) / 100.0,      # convert 12.0% -> 0.12
+                vat_rate=float(vat_percent) / 100.0,
                 vat_mode=vat_mode_label,
                 month=month,
                 forecast_nonempty_only=bool(nonempty_only),
                 no_exclude_sundays=not bool(exclude_sundays),
-                out_name="artel_report"
+                out_name="artel_report",
+                prev_month_override=baseline_month.strip() or None,   # <— NEW
             )
+
         except Exception as e:
             st.error(f"❌ Error while running analysis: {e}")
             st.stop()
@@ -109,4 +111,5 @@ if run:
 
 else:
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
