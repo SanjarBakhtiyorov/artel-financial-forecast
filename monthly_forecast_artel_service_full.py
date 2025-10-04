@@ -247,19 +247,12 @@ def parse_money(x: str) -> float:
     except Exception:
         return 0.0
 
-def read_excel_any(path: str) -> pd.DataFrame:
+def read_excel_any(path):
     ext = os.path.splitext(path)[1].lower()
     if ext == ".xls":
-        try:
-            import xlrd  # ensure installed; raises ImportError if missing
-        except ImportError as e:
-            raise RuntimeError(
-                "This file is .XLS and requires xlrd>=2.0.1.\n"
-                "Please add 'xlrd>=2.0.1' to requirements.txt and redeploy."
-            ) from e
         return pd.read_excel(path, engine="xlrd")
-    # default .xlsx
     return pd.read_excel(path, engine="openpyxl")
+
 def _norm(s: str) -> str:
     return str(s).strip().lower().replace(" ", "").replace("\u00a0", "").replace("/", "").replace("\\", "")
 
@@ -1362,4 +1355,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
