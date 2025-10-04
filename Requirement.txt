@@ -1,8 +1,6 @@
-
-
 streamlit
 pandas
 numpy
 openpyxl
 xlsxwriter
-xlrd
+xlrd>=2.0.1
