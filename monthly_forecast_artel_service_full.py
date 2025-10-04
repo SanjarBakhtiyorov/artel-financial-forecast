@@ -1122,12 +1122,17 @@ def run_analysis(
         t["__source_file"] = os.path.basename(prev_file)
         df_prev_all = t
 
-    # infer previous month if not given
-    prev_month = infer_prev_month(month_eff, df_all, date_source)
+    # 2) after reading prev_file (df_prev_all), decide which previous month to use
+    prev_month = (
+        prev_month_override                                  # explicit from UI, if given
+        or infer_month_from_df(df_prev_all, DATE_SOURCE)     # try to detect from uploaded baseline
+        or infer_prev_month(month, df_all, DATE_SOURCE)      # fallback: same month last year
+    )
 
-    df_cur_period  = prepare_period_df(df_all,      corr_map, special_corr, month_eff, date_source)
+    # 3) slice periods using prev_month
+    df_cur_period  = prepare_period_df(df_all, corr_map, special_corr, month, DATE_SOURCE)
     df_prev_source = df_prev_all if df_prev_all is not None else df_all
-    df_prev_period = prepare_period_df(df_prev_source, corr_map, special_corr, prev_month, date_source)
+    df_prev_period = prepare_period_df(df_prev_source, corr_map, special_corr, prev_month, DATE_SOURCE)
 
     if (
         prev_mode != "skip"
@@ -1356,4 +1361,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
