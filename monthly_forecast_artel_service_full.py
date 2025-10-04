@@ -131,12 +131,15 @@ def compute_g1_transport(df: pd.DataFrame, special_corr) -> pd.DataFrame:
     df["g1_transport"] = np.where(is_call & is_g1 & (~is_special), df["Amount"], 0.0)
     return df
 
-def _calc_after_vat(value: float, vat_rate: float, vat_mode: str) -> float:
-    value = float(value)
-    if vat_mode.lower() in ("extract", "exclusive"):  # both branches end up net-of-VAT for reporting
-        return value / (1.0 + vat_rate)
-    # fallback
-    return value / (1.0 + vat_rate)
+# replace the whole function
+def _calc_after_vat(value, vat_rate: float, vat_mode: str):
+    """
+    Return 'after-VAT' value. Works with scalar, numpy arrays, or pandas Series.
+    For our reporting we always want net = value / (1 + VAT).
+    """
+    base = 1.0 + float(vat_rate or 0.0)
+    # No float() casting of 'value' — keep it vectorized.
+    return value / base
 
 def _month_day_counts(year: int, month: int) -> int:
     import calendar
@@ -537,3 +540,4 @@ def run_analysis(
     out_path = os.path.join(os.getcwd(), f"{base}__{stamp}.xlsx")
     export_excel(tables, out_path)
     return out_path
+
