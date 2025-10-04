@@ -1034,6 +1034,130 @@ def process_dataframe(df: pd.DataFrame,
     }
 
 # ------------------------- MAIN -------------------------
+# --- Streamlit adapter: run_analysis ---------------------------------
+from types import SimpleNamespace
+import os, glob, datetime as dt
+import pandas as pd
+VAT_RATE = 0.12
+VAT_MODE = "EXTRACT"
+DATE_SOURCE = "Data of Document"
+TOP_NAMES = 10  # 👈 add this
+def run_analysis(
+    in_files,                          # list[str] - current period file paths
+    prev_file=None,                    # str|None  - previous year file path
+    call_center=0.0,                   # float     - USD (VAT-included)
+    admin_forecast=0.0,                # float     - USD (after VAT)
+    vat_rate=0.12,                     # 0.12 for 12%
+    vat_mode="exclusive",              # or "extract" depending on your code
+    month=None,                        # "YYYY-MM"
+    forecast_nonempty_only=True,
+    no_exclude_sundays=False,
+    out_name=None
+):
+    """Headless runner for Streamlit. Returns output Excel path."""
+    # --- mimic args/config the same way your main() expects ---
+    args = SimpleNamespace(
+        config=None,
+        vat_rate=vat_rate,
+        vat_mode=vat_mode,
+        date_source=None,
+        top_n_names=None,
+        month=month,
+        forecast_nonempty_only=forecast_nonempty_only,
+        no_exclude_sundays=no_exclude_sundays,
+        special_corr_csv=None,
+        corr_map_csv=None,
+        in_file=None,
+        in_folder=None,
+        call_center=call_center,
+        admin_forecast=admin_forecast,
+        prev_in_file=prev_file,
+        prev_in_folder=None,
+        prev_month=None,
+        out_name=out_name,
+    )
+
+    # ---- read CURRENT files (no prompts) ----
+    if not in_files:
+        raise ValueError("No input files provided.")
+    rows = []
+    for f in in_files:
+        t = read_excel_any(f)
+        t["__source_file"] = os.path.basename(f)
+        rows.append(t)
+    df_all = pd.concat(rows, ignore_index=True)
+
+    # ---- reuse your existing pipeline pieces ----
+    cfg = {}
+    vat_rate_eff = args.vat_rate if args.vat_rate is not None else VAT_RATE
+    vat_mode_eff = args.vat_mode or VAT_MODE
+    date_source = args.date_source or DATE_SOURCE
+    top_n_names = args.top_n_names or TOP_NAMES if 'TOP_NAMES' in globals() else TOP_N_NAMES
+    month_eff = args.month
+
+    nonempty_only = bool(getattr(args, "forecast_nonempty_only", False))
+    exclude_sundays = not bool(getattr(args, "no_exclude_sundays", False))
+
+    special_corr = load_list_from_csv(args.special_corr_csv or None) or SPECIAL_CORR_DEFAULT
+    corr_map     = load_map_from_csv(args.corr_map_csv or None)     or CORRESPONDENT_MAP_DEFAULT
+
+    tables = process_dataframe(
+        df_all,
+        float(args.call_center),
+        float(args.admin_forecast),
+        vat_rate_eff, vat_mode_eff,
+        special_corr, corr_map,
+        month_eff, date_source,
+        top_n_names,
+        nonempty_only, exclude_sundays
+    )
+
+    # ---- YoY (no interactive prompt) ----
+    prev_mode = "skip"
+    df_prev_all = None
+    if prev_file:
+        prev_mode = "file"
+        t = read_excel_any(prev_file)
+        t["__source_file"] = os.path.basename(prev_file)
+        df_prev_all = t
+
+    # infer previous month if not given
+    prev_month = infer_prev_month(month_eff, df_all, date_source)
+
+    df_cur_period  = prepare_period_df(df_all,      corr_map, special_corr, month_eff, date_source)
+    df_prev_source = df_prev_all if df_prev_all is not None else df_all
+    df_prev_period = prepare_period_df(df_prev_source, corr_map, special_corr, prev_month, date_source)
+
+    if (
+        prev_mode != "skip"
+        and df_prev_period is not None and not df_prev_period.empty
+        and df_cur_period  is not None and not df_cur_period.empty
+    ):
+        yoy_monthly = build_yoy_monthly(
+            df_cur_period, df_prev_period,
+            vat_rate_eff, vat_mode_eff,
+            date_source,
+            nonempty_only, exclude_sundays,
+            month_eff
+        )
+        yoy_daily = build_yoy_daily(
+            df_cur_period, df_prev_period, vat_rate_eff, vat_mode_eff, date_source
+        )
+        yoy_warr = build_yoy_warranty(
+            df_cur_period, df_prev_period,
+            vat_rate_eff, vat_mode_eff,
+            date_source, nonempty_only, exclude_sundays, month_eff
+        )
+        tables["YoY_Monthly"]  = yoy_monthly
+        tables["YoY_Daily"]    = yoy_daily
+        tables["YoY_Warranty"] = yoy_warr
+
+    # ---- export and return path ----
+    base  = out_name or (f"monthly_revenue_VAT_{vat_mode_eff}_{month_eff or 'ALL'}")
+    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M")
+    out_path = os.path.join(os.getcwd(), f"{base}__{stamp}.xlsx")
+    export_excel(tables, out_path)
+    return out_path
 
 def main():
     # ---------- 0) Args & config ----------
@@ -1231,4 +1355,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
