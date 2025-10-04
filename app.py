@@ -34,6 +34,10 @@ nonempty_only   = st.sidebar.checkbox("Forecast Non-Empty Days Only", value=True
 
 st.sidebar.markdown("---")
 st.sidebar.header("YoY Comparison")
+baseline_month = st.sidebar.text_input(
+    "Previous period (YYYY-MM) – optional",
+    value=""
+)
 yoy_mode = st.sidebar.selectbox(
     "Baseline Mode",
     ["Skip YoY Comparison", "Same Dataset (auto-detect)", "Upload Previous-Year File"],
@@ -105,3 +109,4 @@ if run:
 
 else:
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
