@@ -222,10 +222,29 @@ import altair as alt  # ensure this import exists once at top of file
 import re
 import altair as alt  # ensure this import exists once at the top
 
+import re
+import altair as alt  # keep import at top once
+
+def _fmt_money_space(x) -> str:
+    """Format 12345.6 -> '12 345.60' with spaces as thousands separator."""
+    try:
+        return f"{float(x):,.2f}".replace(",", " ")
+    except Exception:
+        return str(x)
+
+def _fmt_pct(x) -> str:
+    """Format 0.236 -> '23.60%' and 23.6 -> '23.60%' intelligently."""
+    try:
+        v = float(x)
+        v = v * 100.0 if 0 <= v <= 1 else v
+        return f"{v:.2f}%"
+    except Exception:
+        return str(x)
+
 def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     st.markdown("### 💼 P&L Forecast (After VAT)")
 
-    # ---- 1) Find the sheet safely (no DataFrame 'or' chaining) ----
+    # ---- 1) Find the sheet safely ----
     sheet_candidates = ["P&L_Forecast", "P&L Forecast", "PL_Forecast", "P&L", "PL"]
     df = None
     for k in sheet_candidates:
@@ -245,7 +264,6 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     if label_candidates:
         label_col = label_candidates[0]
     else:
-        # first non-numeric column, else first column
         nonnum = [c for c in df.columns if df[c].dtype == "object"]
         label_col = nonnum[0] if nonnum else df.columns[0]
 
@@ -259,7 +277,6 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
         if numeric_cols:
             value_col = numeric_cols[0]
         else:
-            # coerce the column with the most numeric entries
             best_c, best_cnt = None, -1
             for c in df.columns:
                 coerced = pd.to_numeric(df[c], errors="coerce")
@@ -273,7 +290,6 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
             df[best_c] = pd.to_numeric(df[best_c], errors="coerce")
             value_col = best_c
 
-    # ---- 4) Normalize labels for matching ----
     labels_norm = df[label_col].astype(str).str.replace("–", "-", regex=False).str.strip()
 
     def _pick(regex_pat: str):
@@ -282,7 +298,8 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
         m = df.loc[mask, value_col]
         return float(m.iloc[0]) if not m.empty and pd.notna(m.iloc[0]) else None
 
-    # ---- 5) Extract KPIs (tolerant regex) ----
+    # ---- 4) Pull the numbers we need for ratios ----
+    # Totals
     total_rev_f   = (_pick(r"total\s+revenue.*forecast") or
                      _pick(r"revenue.*forecast.*\(after\s*vat\)") or
                      _pick(r"total.*forecast.*revenue"))
@@ -293,59 +310,73 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     op_margin_pct = (_pick(r"operating\s+margin.*forecast") or
                      _pick(r"op.*margin.*forecast"))
 
-    # ---- 6) Display table with financial formatting ----
-    def _fmt_money_space(x) -> str:
-        try:
-            return f"{float(x):,.2f}".replace(",", " ")
-        except Exception:
-            return str(x)
+    # Mix / progress / factor
+    service_f = _pick(r"revenue.*service.*forecast.*after\s*vat.*excl.*cc")
+    cc_f      = _pick(r"revenue.*call\s*center.*forecast")
+    total_rev_actual = _pick(r"total\s+revenue.*actual\s+to\s+date")
 
+    active_days = _pick(r"forecast\s+active\s+days")
+    month_days  = _pick(r"forecast\s+month\s+days")
+
+    # ---- 5) Show compact P&L table with ONE formatted column only ----
+    # Heuristic: rows with 'margin' or '%' are percentage; others are money
     is_pct = labels_norm.str.contains(r"margin|%", case=False, regex=True)
-    table = df[[label_col, value_col]].copy()
-    def _fmt_row(i, v):
-        try:
-            v = float(v)
-        except Exception:
-            return str(v)
-        if bool(is_pct.iloc[i]):
-            v = v * 100.0 if 0 <= v <= 1 else v
-            return f"{v:.2f}%"
-        return _fmt_money_space(v)
 
-    table["Value (display)"] = [ _fmt_row(i, v) for i, v in enumerate(table[value_col].values) ]
+    table = df[[label_col, value_col]].copy()
+    table["Value (display)"] = [
+        (_fmt_pct(v) if is_pct.iloc[i] else _fmt_money_space(v))
+        for i, v in enumerate(table[value_col].values)
+    ]
+    # Only show Metric + formatted Value
     st.dataframe(
-        table.rename(columns={label_col: "Metric", value_col: "Value"}),
+        table[[label_col, "Value (display)"]].rename(columns={label_col: "Metric"}),
         use_container_width=True,
     )
 
-    # ---- 7) KPI tiles with formatting ----
+    # ---- 6) KPI tiles (formatted) ----
     c1, c2, c3, c4 = st.columns(4)
     if total_rev_f is not None:   c1.metric("Total Revenue (Forecast)", _fmt_money_space(total_rev_f))
     if admin_cost_f is not None:  c2.metric("Admin Costs (Forecast)", _fmt_money_space(admin_cost_f))
     if op_profit_f is not None:   c3.metric("Operating Profit (Forecast)", _fmt_money_space(op_profit_f))
-    if op_margin_pct is not None:
-        m = op_margin_pct * 100.0 if 0 <= op_margin_pct <= 1 else op_margin_pct
-        c4.metric("Operating Margin % (Forecast)", f"{m:.2f}%")
+    if op_margin_pct is not None: c4.metric("Operating Margin % (Forecast)", _fmt_pct(op_margin_pct))
 
-    # ---- 8) Money-only bar chart with formatted tooltip ----
-    bars = []
-    if total_rev_f is not None:  bars.append(("Total Revenue", total_rev_f))
-    if admin_cost_f is not None: bars.append(("Admin Costs", admin_cost_f))
-    if op_profit_f is not None:  bars.append(("Operating Profit", op_profit_f))
-    if bars:
-        chart_df = pd.DataFrame(bars, columns=["Item", "Value"])
-        chart_df["Value_f"] = chart_df["Value"].apply(_fmt_money_space)
-        chart = (
-            alt.Chart(chart_df)
-            .mark_bar()
-            .encode(
-                x=alt.X("Value:Q", title="USD"),
-                y=alt.Y("Item:N", sort="-x"),
-                tooltip=[alt.Tooltip("Item:N"), alt.Tooltip("Value_f:N", title="Value (USD)")]
-            )
-            .properties(width="container", height=120)
-        )
-        st.altair_chart(chart, use_container_width=True)
+    # ---- 7) Ratios (replaces the bar chart) ----
+    ratios = []
+
+    # Admin costs as % of revenue
+    if total_rev_f and admin_cost_f is not None and total_rev_f != 0:
+        ratios.append(("Admin Costs / Total Revenue", _fmt_pct(admin_cost_f / total_rev_f)))
+
+    # Service vs Call Center mix (share of total forecast revenue)
+    if total_rev_f and service_f is not None:
+        ratios.append(("Service Share of Revenue (Forecast)", _fmt_pct(service_f / total_rev_f)))
+    if total_rev_f and cc_f is not None:
+        ratios.append(("Call Center Share of Revenue (Forecast)", _fmt_pct(cc_f / total_rev_f)))
+
+    # Progress vs forecast (actual-to-date / forecast)
+    if total_rev_f and total_rev_actual is not None and total_rev_f != 0:
+        ratios.append(("Progress vs Forecast (Actual / Forecast)", _fmt_pct(total_rev_actual / total_rev_f)))
+
+    # Forecast factor (month_days / active_days)
+    if active_days and month_days and active_days != 0:
+        ratios.append(("Forecast Factor (Month/Active Days)", f"{month_days/active_days:.2f}×"))
+
+    # Breakeven gap (how much revenue missing to reach 0 profit)
+    # If Operating Profit < 0, show gap and % of forecast revenue
+    if op_profit_f is not None and total_rev_f:
+        if op_profit_f < 0:
+            gap = abs(op_profit_f)
+            ratios.append(("Breakeven Gap (to 0 profit)", _fmt_money_space(gap)))
+            ratios.append(("Breakeven Gap as % of Revenue", _fmt_pct(gap / total_rev_f)))
+        else:
+            ratios.append(("Breakeven Status", "At/Above Breakeven"))
+
+    if ratios:
+        st.markdown("#### 📐 Key Ratios")
+        ratio_df = pd.DataFrame(ratios, columns=["Ratio", "Value"])
+        st.dataframe(ratio_df, use_container_width=True)
+    else:
+        st.info("No ratios could be computed from this P&L sheet.")
 
 
 
@@ -477,6 +508,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
