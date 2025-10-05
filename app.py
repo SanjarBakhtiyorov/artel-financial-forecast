@@ -241,6 +241,25 @@ def _fmt_pct(x) -> str:
     except Exception:
         return str(x)
 
+import re
+import altair as alt  # already used elsewhere; keep at top once
+
+def _fmt_money_space(x) -> str:
+    """Format 12345.6 -> '12 345.60' (space thousands)."""
+    try:
+        return f"{float(x):,.2f}".replace(",", " ")
+    except Exception:
+        return str(x)
+
+def _fmt_pct(x) -> str:
+    """Format 0.236 -> '23.60%' // 23.6 -> '23.60%'."""
+    try:
+        v = float(x)
+        v = v * 100.0 if 0 <= v <= 1 else v
+        return f"{v:.2f}%"
+    except Exception:
+        return str(x)
+
 def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     st.markdown("### 💼 P&L Forecast (After VAT)")
 
@@ -267,16 +286,13 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
         nonnum = [c for c in df.columns if df[c].dtype == "object"]
         label_col = nonnum[0] if nonnum else df.columns[0]
 
-    value_col = None
-    for c in df.columns:
-        if c.lower() == "value":
-            value_col = c
-            break
+    value_col = next((c for c in df.columns if c.lower() == "value"), None)
     if value_col is None:
         numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
         if numeric_cols:
             value_col = numeric_cols[0]
         else:
+            # coerce the column with most numeric entries
             best_c, best_cnt = None, -1
             for c in df.columns:
                 coerced = pd.to_numeric(df[c], errors="coerce")
@@ -299,7 +315,6 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
         return float(m.iloc[0]) if not m.empty and pd.notna(m.iloc[0]) else None
 
     # ---- 4) Pull the numbers we need for ratios ----
-    # Totals
     total_rev_f   = (_pick(r"total\s+revenue.*forecast") or
                      _pick(r"revenue.*forecast.*\(after\s*vat\)") or
                      _pick(r"total.*forecast.*revenue"))
@@ -318,51 +333,37 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     active_days = _pick(r"forecast\s+active\s+days")
     month_days  = _pick(r"forecast\s+month\s+days")
 
-    # ---- 5) Show compact P&L table with ONE formatted column only ----
-    # Heuristic: rows with 'margin' or '%' are percentage; others are money
+    # ---- 5) Show compact table with ONE formatted column only ----
     is_pct = labels_norm.str.contains(r"margin|%", case=False, regex=True)
-
     table = df[[label_col, value_col]].copy()
     table["Value (display)"] = [
         (_fmt_pct(v) if is_pct.iloc[i] else _fmt_money_space(v))
         for i, v in enumerate(table[value_col].values)
     ]
-    # Only show Metric + formatted Value
     st.dataframe(
         table[[label_col, "Value (display)"]].rename(columns={label_col: "Metric"}),
         use_container_width=True,
     )
 
-    # ---- 6) KPI tiles (formatted) ----
+    # ---- 6) KPI tiles ----
     c1, c2, c3, c4 = st.columns(4)
     if total_rev_f is not None:   c1.metric("Total Revenue (Forecast)", _fmt_money_space(total_rev_f))
     if admin_cost_f is not None:  c2.metric("Admin Costs (Forecast)", _fmt_money_space(admin_cost_f))
     if op_profit_f is not None:   c3.metric("Operating Profit (Forecast)", _fmt_money_space(op_profit_f))
     if op_margin_pct is not None: c4.metric("Operating Margin % (Forecast)", _fmt_pct(op_margin_pct))
 
-    # ---- 7) Ratios (replaces the bar chart) ----
+    # ---- 7) Ratios (replaces bar chart) ----
     ratios = []
-
-    # Admin costs as % of revenue
     if total_rev_f and admin_cost_f is not None and total_rev_f != 0:
         ratios.append(("Admin Costs / Total Revenue", _fmt_pct(admin_cost_f / total_rev_f)))
-
-    # Service vs Call Center mix (share of total forecast revenue)
     if total_rev_f and service_f is not None:
         ratios.append(("Service Share of Revenue (Forecast)", _fmt_pct(service_f / total_rev_f)))
     if total_rev_f and cc_f is not None:
         ratios.append(("Call Center Share of Revenue (Forecast)", _fmt_pct(cc_f / total_rev_f)))
-
-    # Progress vs forecast (actual-to-date / forecast)
     if total_rev_f and total_rev_actual is not None and total_rev_f != 0:
         ratios.append(("Progress vs Forecast (Actual / Forecast)", _fmt_pct(total_rev_actual / total_rev_f)))
-
-    # Forecast factor (month_days / active_days)
     if active_days and month_days and active_days != 0:
-        ratios.append(("Forecast Factor (Month/Active Days)", f"{month_days/active_days:.2f}×"))
-
-    # Breakeven gap (how much revenue missing to reach 0 profit)
-    # If Operating Profit < 0, show gap and % of forecast revenue
+        ratios.append(("Forecast Factor (Month / Active Days)", f"{month_days/active_days:.2f}×"))
     if op_profit_f is not None and total_rev_f:
         if op_profit_f < 0:
             gap = abs(op_profit_f)
@@ -508,6 +509,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
