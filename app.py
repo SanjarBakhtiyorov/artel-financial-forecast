@@ -173,62 +173,103 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
 
 def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     st.markdown("### 💼 P&L Forecast (After VAT)")
-    df = tables.get("P&L_Forecast")
+
+    # 1) Find the sheet robustly
+    df = (tables.get("P&L_Forecast")
+          or tables.get("P&L Forecast")
+          or tables.get("PL_Forecast")
+          or tables.get("P&L")
+          or tables.get("PL"))
     if df is None or df.empty:
         st.info("P&L_Forecast sheet not found.")
         return
 
-    # Handle both exports: sometimes first column is 'Line', sometimes 'Metric'
-    if "Line" in df.columns:
-        label_col = "Line"
-    elif "Metric" in df.columns:
-        label_col = "Metric"
-        # Keep a view with a synthetic 'Line' for downstream text matching
-        df = df.rename(columns={"Metric": "Line"})
-        label_col = "Line"
+    # 2) Normalize headers (strip spaces) & make a working copy
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # 3) Pick label column (prefer known names; else first object-like)
+    candidates_label = [c for c in df.columns if str(c).strip().lower() in ("line", "metric", "label", "item", "name")]
+    if candidates_label:
+        label_col = candidates_label[0]
     else:
-        st.warning("P&L_Forecast sheet has no 'Line' or 'Metric' column.")
+        # fallback: first non-numeric column
+        nonnum = [c for c in df.columns if df[c].dtype == "object"]
+        label_col = nonnum[0] if nonnum else df.columns[0]
+
+    # 4) Pick value column
+    value_col = None
+    # prefer a column literally named 'Value' (any case)
+    for c in df.columns:
+        if str(c).strip().lower() == "value":
+            value_col = c
+            break
+    # else first numeric dtype
+    if value_col is None:
+        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        if numeric_cols:
+            value_col = numeric_cols[0]
+    # else try to coerce other columns to numeric (pick the one with most numbers)
+    if value_col is None:
+        best_c, best_cnt = None, -1
+        for c in df.columns:
+            coerced = pd.to_numeric(df[c], errors="coerce")
+            cnt = coerced.notna().sum()
+            if cnt > best_cnt:
+                best_c, best_cnt = c, cnt
+        if best_c is not None and best_cnt > 0:
+            df[best_c] = pd.to_numeric(df[best_c], errors="coerce")
+            value_col = best_c
+
+    if value_col is None:
+        st.warning("P&L_Forecast: couldn’t identify a numeric Value column.")
         st.dataframe(df, use_container_width=True)
         return
 
-    # Find a numeric value column (prefer 'Value', else take the first numeric-like second column)
-    value_col = "Value" if "Value" in df.columns else None
-    if value_col is None:
-        # try the second column if present
-        if len(df.columns) >= 2:
-            value_col = df.columns[1]
-        else:
-            st.warning("P&L_Forecast sheet has no recognizable value column.")
-            st.dataframe(df, use_container_width=True)
-            return
+    # 5) Show the simplified table view
+    show_cols = [label_col, value_col] if label_col != value_col else [label_col]
+    st.dataframe(df[show_cols], use_container_width=True)
 
-    # Show table
-    st.dataframe(df[[label_col, value_col]], use_container_width=True)
-
-    # Robust label lookup (works with en-dash/hyphen etc.)
-    def _pick(label: str):
-        if label_col not in df.columns or value_col not in df.columns:
-            return None
-        col_txt = df[label_col].astype(str).str.strip()
-        # normalize dashes
-        target = label.replace("–", "-").strip()
-        match = col_txt.str.replace("–", "-", regex=False).eq(target)
-        m = df.loc[match, value_col]
+    # 6) Robust label matching util (dash-insensitive, case-insensitive, substring-friendly)
+    import re
+    def _pick(regex_pat: str):
+        # normalize dashes in label column
+        labels = df[label_col].astype(str).str.replace("–", "-", regex=False).str.strip()
+        pat = re.compile(regex_pat, flags=re.IGNORECASE)
+        mask = labels.apply(lambda x: bool(pat.search(x)))
+        m = df.loc[mask, value_col]
         return float(m.iloc[0]) if not m.empty and pd.notna(m.iloc[0]) else None
 
-    total_rev_f   = _pick("Total Revenue – Forecast for month (After VAT)")
-    admin_cost_f  = _pick("Administration Costs – Forecast for month (After VAT / net)")
-    op_profit_f   = _pick("Operating Profit – Forecast for month")
-    op_margin_pct = _pick("Operating Margin % – Forecast for month")
+    # 7) Try multiple regexes for each KPI to handle wording variations
+    total_rev_f = (
+        _pick(r"total\s+revenue.*forecast") or
+        _pick(r"revenue.*forecast.*\(after\s*vat\)") or
+        _pick(r"total.*forecast.*revenue")
+    )
+    admin_cost_f = (
+        _pick(r"admin(istration)?\s+costs?.*forecast") or
+        _pick(r"overhead.*forecast")
+    )
+    op_profit_f = (
+        _pick(r"operating\s+profit.*forecast") or
+        _pick(r"op(erating)?\s*profit.*forecast")
+    )
+    op_margin_pct = (
+        _pick(r"operating\s+margin.*forecast") or
+        _pick(r"op.*margin.*forecast")
+    )
 
-    # KPI cards
+    # 8) KPI cards
     c1, c2, c3, c4 = st.columns(4)
     if total_rev_f is not None:   c1.metric("Total Revenue (Forecast)", f"${total_rev_f:,.2f}")
     if admin_cost_f is not None:  c2.metric("Admin Costs (Forecast)", f"${admin_cost_f:,.2f}")
     if op_profit_f is not None:   c3.metric("Operating Profit (Forecast)", f"${op_profit_f:,.2f}")
-    if op_margin_pct is not None: c4.metric("Operating Margin % (Forecast)", f"{op_margin_pct:.2f}%")
+    if op_margin_pct is not None:
+        # If margin looks like a fraction (0.23), show as %
+        m_pct = op_margin_pct * 100.0 if 0 <= op_margin_pct <= 1 else op_margin_pct
+        c4.metric("Operating Margin % (Forecast)", f"{m_pct:.2f}%")
 
-    # Simple bar chart
+    # 9) Bar chart (only when we have numbers)
     bars = []
     if total_rev_f is not None:  bars.append(("Total Revenue", total_rev_f))
     if admin_cost_f is not None: bars.append(("Admin Costs", admin_cost_f))
@@ -236,6 +277,7 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     if bars:
         chart_df = pd.DataFrame(bars, columns=["Item", "Value"]).set_index("Item")
         st.bar_chart(chart_df)
+
 
 # ---------------------------- UPLOADS -----------------------------
 st.subheader("📁 Upload SAP Excel (Current Period)")
@@ -364,4 +406,5 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
