@@ -233,13 +233,13 @@ def _fmt_money_space(x) -> str:
         return str(x)
 
 def _fmt_pct(x) -> str:
-    """Format 0.236 -> '23.60%' and 23.6 -> '23.60%' intelligently."""
+    """Format any ratio as XX.XX% (e.g. 1.26 -> 126.00%)."""
     try:
         v = float(x)
-        v = v * 100.0 if 0 <= v <= 1 else v
-        return f"{v:.2f}%"
+        return f"{v * 100:.2f}%"
     except Exception:
         return str(x)
+
 
 import re
 import altair as alt  # already used elsewhere; keep at top once
@@ -509,6 +509,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
