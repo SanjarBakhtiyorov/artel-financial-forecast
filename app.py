@@ -390,8 +390,8 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     if op_profit_f is not None and op_profit_f < 0:
         gap = abs(op_profit_f)
         ratios.append(("Breakeven Gap as % of Revenue", fmt_pct_ratio(gap / total_rev_f)))
-        else:
-            ratios.append(("Breakeven Status", "At/Above Breakeven"))
+    else:
+        ratios.append(("Breakeven Status", "At/Above Breakeven"))
 
     if ratios:
         st.markdown("#### 📐 Key Ratios")
@@ -530,6 +530,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
