@@ -171,6 +171,38 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
     else:
         st.info("YoY_Daily sheet not found.")
 
+def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
+    st.markdown("### 💼 P&L Forecast (After VAT)")
+    df = tables.get("P&L_Forecast")
+    if df is None or df.empty:
+        st.info("P&L_Forecast sheet not found.")
+        return
+
+    st.dataframe(df, use_container_width=True)
+
+    def _pick(label: str):
+        m = df.loc[df["Line"].astype(str).str.strip().eq(label), "Value"]
+        return float(m.iloc[0]) if not m.empty and pd.notna(m.iloc[0]) else None
+
+    total_rev_f   = _pick("Total Revenue – Forecast for month (After VAT)")
+    admin_cost_f  = _pick("Administration Costs – Forecast for month (After VAT / net)")
+    op_profit_f   = _pick("Operating Profit – Forecast for month")
+    op_margin_pct = _pick("Operating Margin % – Forecast for month")
+
+    c1, c2, c3, c4 = st.columns(4)
+    if total_rev_f is not None:   c1.metric("Total Revenue (Forecast)", f"${total_rev_f:,.2f}")
+    if admin_cost_f is not None:  c2.metric("Admin Costs (Forecast)", f"${admin_cost_f:,.2f}")
+    if op_profit_f is not None:   c3.metric("Operating Profit (Forecast)", f"${op_profit_f:,.2f}")
+    if op_margin_pct is not None: c4.metric("Operating Margin % (Forecast)", f"{op_margin_pct:.2f}%")
+
+    bars = []
+    if total_rev_f is not None:  bars.append(("Total Revenue", total_rev_f))
+    if admin_cost_f is not None: bars.append(("Admin Costs", admin_cost_f))
+    if op_profit_f is not None:  bars.append(("Operating Profit", op_profit_f))
+    if bars:
+        chart_df = pd.DataFrame(bars, columns=["Item", "Value"]).set_index("Item")
+        st.bar_chart(chart_df)
+
 # ---------------------------- UPLOADS -----------------------------
 st.subheader("📁 Upload SAP Excel (Current Period)")
 cur_files = st.file_uploader(
@@ -266,14 +298,15 @@ if st.session_state.get("report_ready") and st.session_state.get("report_path"):
 st.markdown("---")
 st.subheader("📊 Additional Analysis Views")
 
-col_a, col_b, col_c, col_d, col_e = st.columns(5)
+col_a, col_b, col_c, col_d, col_e, col_f = st.columns(6)
 btn_rev   = col_a.button("📈 Revenue Charts",     key="btn_rev")
 btn_corr  = col_b.button("🏭 By Correspondent",   key="btn_corr")
 btn_warr  = col_c.button("🧩 Warranty Structure", key="btn_warr")
 btn_daily = col_d.button("📅 Daily Trend",        key="btn_daily")
 btn_yoy   = col_e.button("📊 YoY Compare",        key="btn_yoy")
+btn_pl    = col_f.button("💼 P&L",                key="btn_pl")
 
-if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy]):
+if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
     rp = st.session_state.get("report_path")
     if not rp or not os.path.isfile(rp):
         st.warning("No generated report found. Please run the forecast first.")
@@ -291,6 +324,8 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy]):
             _render_daily_trend(tables)
         if btn_yoy:
             _render_yoy_views(tables)
+        if btn_pl:
+            _render_pl_forecast(tables)
 
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
