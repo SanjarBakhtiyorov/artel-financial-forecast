@@ -6,6 +6,8 @@ import streamlit as st
 import pandas as pd
 from typing import Dict
 import altair as alt
+import numpy as np
+
 
 # Backend entrypoint (must be in the repo)
 # def run_analysis(..., prev_month_override=None) -> str
@@ -113,8 +115,6 @@ def _render_revenue_charts(tables: Dict[str, pd.DataFrame], vat_rate: float):
         st.bar_chart(dfc)
     else:
         st.warning("No revenue values available for chart.")
-
-import altair as alt  # make sure this import is at the top of the file
 
 def _render_by_correspondent(tables: Dict[str, pd.DataFrame], vat_rate: float):
     st.markdown("### 🏭 Top Correspondents (After VAT)")
@@ -665,7 +665,7 @@ btn_yoy   = col_e.button("📊 YoY Compare",          key="btn_yoy")
 btn_pl    = col_f.button("💼 P&L",                  key="btn_pl")
 btn_yoyw  = col_g.button("🧩 YoY Warranty (Pie)",   key="btn_yoyw")
 
-if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
+if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl, btn_yoyw]):
     rp = st.session_state.get("report_path")
     if not rp or not os.path.isfile(rp):
         st.warning("No generated report found. Please run the forecast first.")
@@ -692,6 +692,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
