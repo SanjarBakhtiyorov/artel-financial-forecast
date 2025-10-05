@@ -214,93 +214,7 @@ def _render_daily_trend(tables: Dict[str, pd.DataFrame]):
 
 import altair as alt
 
-def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
-    st.markdown("### 📊 YoY Comparison")
-
-    # -------- YoY_Monthly --------
-    ym = tables.get("YoY_Monthly")
-    if ym is not None and not ym.empty:
-        dfm = ym.copy()
-        dfm.columns = [str(c).strip() for c in dfm.columns]
-
-        metric_col = "Metric" if "Metric" in dfm.columns else dfm.columns[0]
-        if "Value" in dfm.columns:
-            value_col = "Value"
-        else:
-            num_cols = [c for c in dfm.columns if pd.api.types.is_numeric_dtype(dfm[c])]
-            value_col = num_cols[0] if num_cols else dfm.columns[1]
-
-        # simple, robust parser
-        def _to_float(x):
-            if x is None or (isinstance(x, float) and pd.isna(x)):
-                return None
-            s = str(x).strip().replace(" ", "").replace(",", "")
-            if s.endswith("%"):  # strip any percent sign
-                s = s[:-1]
-            try:
-                return float(s)
-            except Exception:
-                return None
-
-        # --- pick raw cells
-        def _pick_raw(label):
-            s = dfm.loc[dfm[metric_col].astype(str).str.strip().eq(label), value_col]
-            return None if s.empty else s.iloc[0]
-
-        cur_proj_raw     = _pick_raw("Projected Revenue (After VAT, excl CC) – Current")
-        prev_actual_raw  = _pick_raw("Actual Revenue (After VAT, excl CC) – Previous Period")
-        delta_raw        = _pick_raw("Δ vs Previous Period")
-        pct_vs_prev_raw  = _pick_raw("% vs Previous Period")
-
-        # --- numerics
-        cur_proj     = _to_float(cur_proj_raw)
-        prev_actual  = _to_float(prev_actual_raw)
-        delta_money  = _to_float(delta_raw)
-        pct_vs_prev  = _to_float(pct_vs_prev_raw)
-
-        # enforce rule: if abs(value)>1 → it's a whole percent; convert to fraction first
-        def _pct_display(v):
-            if v is None:
-                return ""
-            if abs(v) > 1:
-                v = v / 100.0
-            return f"{v*100:.2f}%"
-
-        # KPI tiles
-        c1, c2, c3, c4 = st.columns(4)
-        if cur_proj    is not None: c1.metric("Current Projected (After VAT, excl CC)", _fmt_money_space(cur_proj))
-        if prev_actual is not None: c2.metric("Prev Period Actual (After VAT, excl CC)", _fmt_money_space(prev_actual))
-        if delta_money is not None: c3.metric("Δ vs Prev", _fmt_money_space(delta_money))
-        if pct_vs_prev is not None: c4.metric("% vs Prev", _pct_display(pct_vs_prev))
-
-        # table formatting per-row
-        def _format_row(label: str, raw_value):
-            lbl = (label or "").strip()
-            v = _to_float(raw_value)
-            if v is None:
-                return str(raw_value)
-            if lbl.startswith("Δ"):
-                return _fmt_money_space(v)           # money
-            if lbl == "% vs Previous Period":
-                return _pct_display(v)               # enforce scaling rule
-            return _fmt_money_space(v)               # default money
-
-        dfm["Value (display)"] = [
-            _format_row(str(dfm.loc[i, metric_col]), dfm.loc[i, value_col])
-            for i in range(len(dfm))
-        ]
-
-        st.dataframe(
-            dfm[[metric_col, "Value (display)"]].rename(columns={metric_col: "Metric"}),
-            use_container_width=True
-        )
-    else:
-        st.info("YoY_Monthly sheet not found.")
-
-    # -------- YoY_Daily (unchanged) --------
-    # ... keep your existing YoY_Daily block below ...
-
-"This is my pilot project"
+def"This is my pilot project"
 def _fmt_money_space(x) -> str:
     """Format 12345.6 -> '12 345.60' with spaces as thousands separator."""
     try:
@@ -678,6 +592,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl, btn_yoyw]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
