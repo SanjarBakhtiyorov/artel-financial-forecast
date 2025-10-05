@@ -272,8 +272,39 @@ if run:
                 file_name=os.path.basename(output_path),
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
+        # ---------------------------- ADDITIONAL ANALYSIS VIEWS ----------------------------
+        st.markdown("---")
+        st.subheader("📊 Additional Analysis Views")
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+        btn_rev  = c1.button("📈 Revenue Charts")
+        btn_corr = c2.button("🏭 By Correspondent")
+        btn_warr = c3.button("🧩 Warranty Structure")
+        btn_daily= c4.button("📅 Daily Trend")
+        btn_yoy  = c5.button("📊 YoY Compare")
+
+        # Load the tables only when needed
+        if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy]):
+            tables = _read_report_tables(output_path)
+            vat_rate_eff = float(vat_percent) / 100.0
+
+            if btn_rev:
+                _render_revenue_charts(tables, vat_rate_eff)
+
+            if btn_corr:
+                _render_by_correspondent(tables, vat_rate_eff)
+
+            if btn_warr:
+                _render_warranty_share(tables, vat_rate_eff)
+
+            if btn_daily:
+                _render_daily_trend(tables)
+
+            if btn_yoy:
+                _render_yoy_views(tables)
 
 
 else:
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
