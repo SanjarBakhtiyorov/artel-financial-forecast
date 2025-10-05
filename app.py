@@ -33,6 +33,23 @@ def _fmt_money_space(x) -> str:
         return f"{float(x):,.2f}".replace(",", " ")
     except Exception:
         return str(x)
+def fmt_pct_ratio(x) -> str:
+    """For ratios we compute (e.g., 235000 / 186099.27). Always x*100."""
+    try:
+        return f"{float(x) * 100:.2f}%"
+    except Exception:
+        return str(x)
+
+def fmt_pct_metric(x) -> str:
+    """For metrics coming from sheets (may already be percent-like)."""
+    try:
+        v = float(x)
+        # If it's a small fraction, convert to %
+        if -1.0 <= v <= 1.0:
+            v *= 100.0
+        return f"{v:.2f}%"
+    except Exception:
+        return str(x)
 
 # ---------------------------- SIDEBAR -----------------------------
 st.sidebar.header("Configuration")
@@ -350,25 +367,29 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     if total_rev_f is not None:   c1.metric("Total Revenue (Forecast)", _fmt_money_space(total_rev_f))
     if admin_cost_f is not None:  c2.metric("Admin Costs (Forecast)", _fmt_money_space(admin_cost_f))
     if op_profit_f is not None:   c3.metric("Operating Profit (Forecast)", _fmt_money_space(op_profit_f))
-    if op_margin_pct is not None: c4.metric("Operating Margin % (Forecast)", _fmt_pct(op_margin_pct))
-
+    if op_margin_pct is not None: c4.metric("Operating Margin % (Forecast)", fmt_pct_metric(op_margin_pct))
     # ---- 7) Ratios (replaces bar chart) ----
     ratios = []
     if total_rev_f and admin_cost_f is not None and total_rev_f != 0:
-        ratios.append(("Admin Costs / Total Revenue", _fmt_pct(admin_cost_f / total_rev_f)))
-    if total_rev_f and service_f is not None:
-        ratios.append(("Service Share of Revenue (Forecast)", _fmt_pct(service_f / total_rev_f)))
+       # Admin Costs / Revenue
+        ratios.append(("Admin Costs / Total Revenue", fmt_pct_ratio(admin_cost_f / total_rev_f)))
+    # Service & Call Center mix
+    if service_f is not None:
+        ratios.append(("Service Share of Revenue (Forecast)", fmt_pct_ratio(service_f / total_rev_f)))
+    if cc_f is not None:
+        ratios.append(("Call Center Share of Revenue (Forecast)", fmt_pct_ratio(cc_f / total_rev_f)))
     if total_rev_f and cc_f is not None:
         ratios.append(("Call Center Share of Revenue (Forecast)", _fmt_pct(cc_f / total_rev_f)))
-    if total_rev_f and total_rev_actual is not None and total_rev_f != 0:
-        ratios.append(("Progress vs Forecast (Actual / Forecast)", _fmt_pct(total_rev_actual / total_rev_f)))
+    # Progress vs Forecast
+    if total_rev_actual is not None:
+        ratios.append(("Progress vs Forecast (Actual / Forecast)", fmt_pct_ratio(total_rev_actual / total_rev_f)))
     if active_days and month_days and active_days != 0:
         ratios.append(("Forecast Factor (Month / Active Days)", f"{month_days/active_days:.2f}×"))
-    if op_profit_f is not None and total_rev_f:
-        if op_profit_f < 0:
-            gap = abs(op_profit_f)
-            ratios.append(("Breakeven Gap (to 0 profit)", _fmt_money_space(gap)))
-            ratios.append(("Breakeven Gap as % of Revenue", _fmt_pct(gap / total_rev_f)))
+    
+# Breakeven gap as % of revenue
+    if op_profit_f is not None and op_profit_f < 0:
+        gap = abs(op_profit_f)
+        ratios.append(("Breakeven Gap as % of Revenue", fmt_pct_ratio(gap / total_rev_f)))
         else:
             ratios.append(("Breakeven Status", "At/Above Breakeven"))
 
@@ -509,6 +530,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
