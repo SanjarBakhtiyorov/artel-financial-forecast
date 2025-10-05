@@ -214,7 +214,7 @@ def _render_daily_trend(tables: Dict[str, pd.DataFrame]):
 
 import altair as alt
 
-def"This is my pilot project"
+"This is my pilot project"
 def _fmt_money_space(x) -> str:
     """Format 12345.6 -> '12 345.60' with spaces as thousands separator."""
     try:
@@ -592,6 +592,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl, btn_yoyw]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
