@@ -271,17 +271,19 @@ if run:
                 data=f,
                 file_name=os.path.basename(output_path),
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"download_{os.path.basename(output_path)}",  # 👈 unique key
             )
         # ---------------------------- ADDITIONAL ANALYSIS VIEWS ----------------------------
         st.markdown("---")
         st.subheader("📊 Additional Analysis Views")
 
         c1, c2, c3, c4, c5 = st.columns(5)
-        btn_rev  = c1.button("📈 Revenue Charts")
-        btn_corr = c2.button("🏭 By Correspondent")
-        btn_warr = c3.button("🧩 Warranty Structure")
-        btn_daily= c4.button("📅 Daily Trend")
-        btn_yoy  = c5.button("📊 YoY Compare")
+        btn_rev  = c1.button("📈 Revenue Charts",      key="btn_rev")
+        btn_corr = c2.button("🏭 By Correspondent",     key="btn_corr")
+        btn_warr = c3.button("🧩 Warranty Structure",   key="btn_warr")
+        btn_daily= c4.button("📅 Daily Trend",          key="btn_daily")
+        btn_yoy  = c5.button("📊 YoY Compare",          key="btn_yoy")
+
 
         # Load the tables only when needed
         if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy]):
@@ -306,5 +308,6 @@ if run:
 
 else:
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
