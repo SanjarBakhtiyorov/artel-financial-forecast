@@ -236,7 +236,7 @@ def _fmt_pct(x) -> str:
     """Format any ratio as XX.XX% (e.g. 1.26 -> 126.00%)."""
     try:
         v = float(x)
-        return f"{v * 100:.2f}%"
+        return f"{v * 100:.2f}"
     except Exception:
         return str(x)
 
@@ -509,6 +509,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
