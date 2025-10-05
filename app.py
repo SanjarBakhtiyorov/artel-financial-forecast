@@ -309,7 +309,6 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
         if numeric_cols:
             value_col = numeric_cols[0]
         else:
-            # coerce the column with most numeric entries
             best_c, best_cnt = None, -1
             for c in df.columns:
                 coerced = pd.to_numeric(df[c], errors="coerce")
@@ -342,11 +341,9 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     op_margin_pct = (_pick(r"operating\s+margin.*forecast") or
                      _pick(r"op.*margin.*forecast"))
 
-    # Mix / progress / factor
     service_f = _pick(r"revenue.*service.*forecast.*after\s*vat.*excl.*cc")
     cc_f      = _pick(r"revenue.*call\s*center.*forecast")
     total_rev_actual = _pick(r"total\s+revenue.*actual\s+to\s+date")
-
     active_days = _pick(r"forecast\s+active\s+days")
     month_days  = _pick(r"forecast\s+month\s+days")
 
@@ -354,7 +351,7 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     is_pct = labels_norm.str.contains(r"margin|%", case=False, regex=True)
     table = df[[label_col, value_col]].copy()
     table["Value (display)"] = [
-        (_fmt_pct(v) if is_pct.iloc[i] else _fmt_money_space(v))
+        (fmt_pct_metric(v) if is_pct.iloc[i] else _fmt_money_space(v))
         for i, v in enumerate(table[value_col].values)
     ]
     st.dataframe(
@@ -368,30 +365,31 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     if admin_cost_f is not None:  c2.metric("Admin Costs (Forecast)", _fmt_money_space(admin_cost_f))
     if op_profit_f is not None:   c3.metric("Operating Profit (Forecast)", _fmt_money_space(op_profit_f))
     if op_margin_pct is not None: c4.metric("Operating Margin % (Forecast)", fmt_pct_metric(op_margin_pct))
-    # ---- 7) Ratios (replaces bar chart) ----
+
+    # ---- 7) Ratios (no bar chart) ----
     ratios = []
-    if total_rev_f and admin_cost_f is not None and total_rev_f != 0:
-       # Admin Costs / Revenue
+
+    if (total_rev_f is not None) and (admin_cost_f is not None) and float(total_rev_f) != 0.0:
         ratios.append(("Admin Costs / Total Revenue", fmt_pct_ratio(admin_cost_f / total_rev_f)))
-    # Service & Call Center mix
-    if service_f is not None:
+
+    if (total_rev_f is not None) and (service_f is not None) and float(total_rev_f) != 0.0:
         ratios.append(("Service Share of Revenue (Forecast)", fmt_pct_ratio(service_f / total_rev_f)))
-    if cc_f is not None:
+    if (total_rev_f is not None) and (cc_f is not None) and float(total_rev_f) != 0.0:
         ratios.append(("Call Center Share of Revenue (Forecast)", fmt_pct_ratio(cc_f / total_rev_f)))
-    if total_rev_f and cc_f is not None:
-        ratios.append(("Call Center Share of Revenue (Forecast)", _fmt_pct(cc_f / total_rev_f)))
-    # Progress vs Forecast
-    if total_rev_actual is not None:
+
+    if (total_rev_f is not None) and (total_rev_actual is not None) and float(total_rev_f) != 0.0:
         ratios.append(("Progress vs Forecast (Actual / Forecast)", fmt_pct_ratio(total_rev_actual / total_rev_f)))
-    if active_days and month_days and active_days != 0:
-        ratios.append(("Forecast Factor (Month / Active Days)", f"{month_days/active_days:.2f}×"))
-    
-# Breakeven gap as % of revenue
-    if op_profit_f is not None and op_profit_f < 0:
-        gap = abs(op_profit_f)
-        ratios.append(("Breakeven Gap as % of Revenue", fmt_pct_ratio(gap / total_rev_f)))
-    else:
-        ratios.append(("Breakeven Status", "At/Above Breakeven"))
+
+    if (active_days is not None) and (month_days is not None) and float(active_days) != 0.0:
+        ratios.append(("Forecast Factor (Month / Active Days)", f"{float(month_days)/float(active_days):.2f}×"))
+
+    if (op_profit_f is not None) and (total_rev_f is not None) and float(total_rev_f) != 0.0:
+        if op_profit_f < 0:
+            gap = abs(op_profit_f)
+            ratios.append(("Breakeven Gap (to 0 profit)", _fmt_money_space(gap)))
+            ratios.append(("Breakeven Gap as % of Revenue", fmt_pct_ratio(gap / total_rev_f)))
+        else:
+            ratios.append(("Breakeven Status", "At/Above Breakeven"))
 
     if ratios:
         st.markdown("#### 📐 Key Ratios")
@@ -399,6 +397,7 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
         st.dataframe(ratio_df, use_container_width=True)
     else:
         st.info("No ratios could be computed from this P&L sheet.")
+
 
 
 
@@ -530,6 +529,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
