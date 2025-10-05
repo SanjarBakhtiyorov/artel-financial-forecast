@@ -28,6 +28,12 @@ def _has_xls(files) -> bool:
     if not files:
         return False
     return any(os.path.splitext(f.name)[1].lower() == ".xls" for f in files)
+def _fmt_money_space(x) -> str:
+    """Format 12345.6 -> '12 345.60' with spaces as thousands separator."""
+    try:
+        return f"{float(x):,.2f}".replace(",", " ")
+    except Exception:
+        return str(x)
 
 # ---------------------------- SIDEBAR -----------------------------
 st.sidebar.header("Configuration")
@@ -92,6 +98,8 @@ def _render_revenue_charts(tables: Dict[str, pd.DataFrame], vat_rate: float):
     else:
         st.warning("No revenue values available for chart.")
 
+import altair as alt  # make sure this import is at the top of the file
+
 def _render_by_correspondent(tables: Dict[str, pd.DataFrame], vat_rate: float):
     st.markdown("### 🏭 Top Correspondents (After VAT)")
     df = tables.get("By_Correspondent")
@@ -99,14 +107,13 @@ def _render_by_correspondent(tables: Dict[str, pd.DataFrame], vat_rate: float):
         st.info("By_Correspondent sheet not found.")
         return
 
-    # Prefer net before VAT → convert to After VAT
+    # Prefer net-before-VAT, then convert to After VAT
     val_col = "net_before_vat_usd" if "net_before_vat_usd" in df.columns else "gross_amount_usd"
 
     work = df.copy()
-    # Drop the synthetic CC line
     work = work[work["Correspondent"].astype(str) != "CALL_CENTER"]
 
-    # Choose display name: use correspondent_name if present, else the numeric ID
+    # Display name (human readable)
     if "correspondent_name" in work.columns:
         work["display"] = work["correspondent_name"].fillna(work["Correspondent"].astype(str))
     else:
@@ -115,7 +122,7 @@ def _render_by_correspondent(tables: Dict[str, pd.DataFrame], vat_rate: float):
     # After VAT
     work["after_vat"] = work[val_col].astype(float) / (1.0 + vat_rate)
 
-    # Aggregate in case multiple IDs share the same display name
+    # Aggregate & Top 10
     top = (
         work.groupby("display", as_index=False)["after_vat"]
             .sum()
@@ -127,26 +134,30 @@ def _render_by_correspondent(tables: Dict[str, pd.DataFrame], vat_rate: float):
         st.info("No correspondent data to display.")
         return
 
-    # Horizontal bar chart for clearer labels
+    # String-formatted amount for table & tooltip
+    top["after_vat_fmt"] = top["after_vat"].apply(_fmt_money_space)
+
+    # Horizontal bar chart (numeric field for scale, formatted string for tooltip)
     chart = (
         alt.Chart(top)
         .mark_bar()
         .encode(
             x=alt.X("after_vat:Q", title="After VAT (USD)"),
             y=alt.Y("display:N", sort="-x", title="Correspondent"),
-            tooltip=[alt.Tooltip("display:N", title="Correspondent"),
-                     alt.Tooltip("after_vat:Q", title="After VAT (USD)", format=",.2f")]
+            tooltip=[
+                alt.Tooltip("display:N", title="Correspondent"),
+                alt.Tooltip("after_vat_fmt:N", title="After VAT (USD)")
+            ],
         )
         .properties(height=30 * len(top), width="container")
     )
     st.altair_chart(chart, use_container_width=True)
 
-    # Also show a small table under the chart
-    st.dataframe(
-        top.rename(columns={"display": "Correspondent", "after_vat": "After VAT (USD)"}),
-        use_container_width=True,
+    # Nicely formatted table
+    table = top[["display", "after_vat_fmt"]].rename(
+        columns={"display": "Correspondent", "after_vat_fmt": "After VAT (USD)"}
     )
-
+    st.dataframe(table, use_container_width=True)
 def _render_warranty_share(tables: Dict[str, pd.DataFrame], vat_rate: float):
     st.markdown("### 🧩 Warranty Structure (After VAT)")
     df = tables.get("By_Warranty")
@@ -401,6 +412,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
