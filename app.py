@@ -10,12 +10,10 @@ from typing import Dict
 # def run_analysis(..., prev_month_override=None) -> str
 from monthly_forecast_artel_service_full import run_analysis
 
-
 # ---------------------------- UI SETUP ----------------------------
 st.set_page_config(page_title="Artel Monthly Forecast", page_icon="📊", layout="wide")
 st.title("📊 Artel Financial Forecast & YoY Analysis Tool")
 st.caption("Upload SAP Excel, enter inputs, and generate monthly reports with optional YoY comparison.")
-
 
 # ---------------------------- HELPERS -----------------------------
 def _xlrd_available() -> bool:
@@ -25,12 +23,10 @@ def _xlrd_available() -> bool:
     except Exception:
         return False
 
-
 def _has_xls(files) -> bool:
     if not files:
         return False
     return any(os.path.splitext(f.name)[1].lower() == ".xls" for f in files)
-
 
 # ---------------------------- SIDEBAR -----------------------------
 st.sidebar.header("Configuration")
@@ -69,10 +65,7 @@ def _read_report_tables(xlsx_path: str) -> Dict[str, pd.DataFrame]:
 
 def _render_revenue_charts(tables: Dict[str, pd.DataFrame], vat_rate: float):
     st.markdown("### 📈 Revenue: Actual vs Forecast")
-    # Pull values from Summary / Reconciliation
-    actual_excl_cc = None
-    forecast_excl_cc = None
-
+    actual_excl_cc, forecast_excl_cc = None, None
     rec = tables.get("Reconciliation")
     if rec is not None and {"Metric", "Value"}.issubset(rec.columns):
         def _pick(metric_key: str):
@@ -82,13 +75,11 @@ def _render_revenue_charts(tables: Dict[str, pd.DataFrame], vat_rate: float):
         forecast_excl_cc = _pick("Forecast (After VAT, excl CC)")
 
     if actual_excl_cc is None or forecast_excl_cc is None:
-        st.info("Couldn’t find values in Reconciliation sheet – showing Summary fallback.")
         summary = tables.get("Summary")
         if summary is not None and {"Metric","Value"}.issubset(summary.columns):
             actual = summary.loc[summary["Metric"].eq("Revenue After VAT"), "Value"]
             actual_excl_cc = float(actual.iloc[0]) if not actual.empty else None
 
-    # Chart
     data = []
     if actual_excl_cc is not None:
         data.append(("Actual (After VAT excl CC)", actual_excl_cc))
@@ -106,7 +97,6 @@ def _render_by_correspondent(tables: Dict[str, pd.DataFrame], vat_rate: float):
     if df is None or df.empty:
         st.info("By_Correspondent sheet not found.")
         return
-    # Prefer net_before_vat_usd; convert to After VAT
     col = "net_before_vat_usd" if "net_before_vat_usd" in df.columns else "gross_amount_usd"
     work = df.copy()
     work = work[work["Correspondent"].astype(str) != "CALL_CENTER"]
@@ -129,7 +119,6 @@ def _render_warranty_share(tables: Dict[str, pd.DataFrame], vat_rate: float):
         st.info("By_Warranty sheet not found.")
         return
     base = df.copy()
-    # amount_usd - g1_transport_usd approximates service part excluding G1 transport
     amt = "amount_usd" if "amount_usd" in base.columns else None
     g1  = "g1_transport_usd" if "g1_transport_usd" in base.columns else None
     if amt is None:
@@ -141,7 +130,6 @@ def _render_warranty_share(tables: Dict[str, pd.DataFrame], vat_rate: float):
     if base.empty:
         st.info("No positive warranty values.")
         return
-    # Use a simple normalized bar as a share viz (built-in)
     total = base["after_vat"].sum()
     base["Share %"] = (base["after_vat"] / total * 100.0).round(2)
     st.dataframe(base)
@@ -173,7 +161,6 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
         st.info("YoY_Monthly sheet not found.")
     if yd is not None and not yd.empty:
         st.write("**Daily Comparison**")
-        # Show both series if available
         cols = [c for c in yd.columns if "After VAT" in c]
         if "Day" in yd.columns and cols:
             tmp = yd.copy()
@@ -206,8 +193,7 @@ if _has_xls(cur_files) or (prev_file_obj and prev_file_obj.name.lower().endswith
             icon="⚠️",
         )
 
-run = st.button("🚀 Run Forecast")
-
+run = st.button("🚀 Run Forecast", key="btn_run_forecast")
 
 # ---------------------------- RUN JOB -----------------------------
 if run:
@@ -220,7 +206,6 @@ if run:
         st.stop()
 
     with st.spinner("Processing…"):
-        # Save uploads to a temp directory
         tmp_dir = tempfile.mkdtemp()
         cur_paths = []
         for f in cur_files:
@@ -256,58 +241,57 @@ if run:
             st.error(f"❌ Error while running analysis: {e}")
             st.stop()
 
+        # Persist context for reruns (so buttons work after click)
+        st.session_state["report_ready"] = True
+        st.session_state["report_path"] = output_path
+        st.session_state["vat_rate_eff"] = float(vat_percent) / 100.0
+
         st.success("✅ Forecast completed!")
+
+# ---------------------------- PERSISTENT DOWNLOAD ----------------------------
+if st.session_state.get("report_ready") and st.session_state.get("report_path"):
+    rp = st.session_state["report_path"]
+    if os.path.isfile(rp):
         st.caption("Click below to download the Excel report.")
-        with open(output_path, "rb") as f:
+        with open(rp, "rb") as f:
             st.download_button(
                 label="⬇️ Download Excel Report",
                 data=f,
-                file_name=os.path.basename(output_path),
+                file_name=os.path.basename(rp),
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"download_{os.path.basename(rp)}",
             )
-        with open(output_path, "rb") as f:
-            st.download_button(
-                label="⬇️ Download Excel Report",
-                data=f,
-                file_name=os.path.basename(output_path),
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"download_{os.path.basename(output_path)}",  # 👈 unique key
-            )
-        # ---------------------------- ADDITIONAL ANALYSIS VIEWS ----------------------------
-        st.markdown("---")
-        st.subheader("📊 Additional Analysis Views")
 
-        c1, c2, c3, c4, c5 = st.columns(5)
-        btn_rev  = c1.button("📈 Revenue Charts",      key="btn_rev")
-        btn_corr = c2.button("🏭 By Correspondent",     key="btn_corr")
-        btn_warr = c3.button("🧩 Warranty Structure",   key="btn_warr")
-        btn_daily= c4.button("📅 Daily Trend",          key="btn_daily")
-        btn_yoy  = c5.button("📊 YoY Compare",          key="btn_yoy")
+# ---------------------------- ADDITIONAL ANALYSIS VIEWS ----------------------------
+st.markdown("---")
+st.subheader("📊 Additional Analysis Views")
 
+col_a, col_b, col_c, col_d, col_e = st.columns(5)
+btn_rev   = col_a.button("📈 Revenue Charts",     key="btn_rev")
+btn_corr  = col_b.button("🏭 By Correspondent",   key="btn_corr")
+btn_warr  = col_c.button("🧩 Warranty Structure", key="btn_warr")
+btn_daily = col_d.button("📅 Daily Trend",        key="btn_daily")
+btn_yoy   = col_e.button("📊 YoY Compare",        key="btn_yoy")
 
-        # Load the tables only when needed
-        if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy]):
-            tables = _read_report_tables(output_path)
-            vat_rate_eff = float(vat_percent) / 100.0
+if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy]):
+    rp = st.session_state.get("report_path")
+    if not rp or not os.path.isfile(rp):
+        st.warning("No generated report found. Please run the forecast first.")
+    else:
+        tables = _read_report_tables(rp)
+        vat_rate_eff = st.session_state.get("vat_rate_eff", float(vat_percent) / 100.0)
 
-            if btn_rev:
-                _render_revenue_charts(tables, vat_rate_eff)
+        if btn_rev:
+            _render_revenue_charts(tables, vat_rate_eff)
+        if btn_corr:
+            _render_by_correspondent(tables, vat_rate_eff)
+        if btn_warr:
+            _render_warranty_share(tables, vat_rate_eff)
+        if btn_daily:
+            _render_daily_trend(tables)
+        if btn_yoy:
+            _render_yoy_views(tables)
 
-            if btn_corr:
-                _render_by_correspondent(tables, vat_rate_eff)
-
-            if btn_warr:
-                _render_warranty_share(tables, vat_rate_eff)
-
-            if btn_daily:
-                _render_daily_trend(tables)
-
-            if btn_yoy:
-                _render_yoy_views(tables)
-
-
-else:
+# ---------------------------- FOOTER ----------------------------
+if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
-
-
-
