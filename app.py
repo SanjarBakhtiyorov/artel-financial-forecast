@@ -29,7 +29,6 @@ def _has_xls(files) -> bool:
         return False
     return any(os.path.splitext(f.name)[1].lower() == ".xls" for f in files)
 def _fmt_money_space(x) -> str:
-    """Format 12345.6 -> '12 345.60' with spaces as thousands separator."""
     try:
         return f"{float(x):,.2f}".replace(",", " ")
     except Exception:
@@ -460,6 +459,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
