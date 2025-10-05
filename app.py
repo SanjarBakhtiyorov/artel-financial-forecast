@@ -217,71 +217,119 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
     else:
         st.info("YoY_Daily sheet not found.")
 
+import re
+import altair as alt  # ensure this import exists once at top of file
+
 def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     st.markdown("### 💼 P&L Forecast (After VAT)")
-    df = tables.get("P&L_Forecast")
+
+    # Accept a few sheet-name variants
+    df = (tables.get("P&L_Forecast")
+          or tables.get("P&L Forecast")
+          or tables.get("PL_Forecast")
+          or tables.get("P&L")
+          or tables.get("PL"))
     if df is None or df.empty:
         st.info("P&L_Forecast sheet not found.")
         return
 
-    # Handle both exports: sometimes first column is 'Line', sometimes 'Metric'
-    if "Line" in df.columns:
-        label_col = "Line"
-    elif "Metric" in df.columns:
-        label_col = "Metric"
-        # Keep a view with a synthetic 'Line' for downstream text matching
-        df = df.rename(columns={"Metric": "Line"})
-        label_col = "Line"
-    else:
-        st.warning("P&L_Forecast sheet has no 'Line' or 'Metric' column.")
-        st.dataframe(df, use_container_width=True)
-        return
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
 
-    # Find a numeric value column (prefer 'Value', else take the first numeric-like second column)
-    value_col = "Value" if "Value" in df.columns else None
+    # --- detect label/value columns robustly ---
+    label_candidates = [c for c in df.columns if c.lower() in ("line", "metric", "label", "item", "name")]
+    label_col = label_candidates[0] if label_candidates else (
+        [c for c in df.columns if df[c].dtype == "object"][0] if any(df[c].dtype == "object" for c in df.columns) else df.columns[0]
+    )
+
+    value_col = None
+    for c in df.columns:
+        if c.lower() == "value":
+            value_col = c
+            break
     if value_col is None:
-        # try the second column if present
-        if len(df.columns) >= 2:
-            value_col = df.columns[1]
+        nums = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        if nums:
+            value_col = nums[0]
         else:
-            st.warning("P&L_Forecast sheet has no recognizable value column.")
-            st.dataframe(df, use_container_width=True)
-            return
+            # coerce best column to numeric
+            best_c, best_cnt = None, -1
+            for c in df.columns:
+                coerced = pd.to_numeric(df[c], errors="coerce")
+                cnt = coerced.notna().sum()
+                if cnt > best_cnt:
+                    best_c, best_cnt = c, cnt
+            if best_c is None or best_cnt <= 0:
+                st.warning("P&L_Forecast: couldn’t identify a numeric value column.")
+                st.dataframe(df, use_container_width=True)
+                return
+            df[best_c] = pd.to_numeric(df[best_c], errors="coerce")
+            value_col = best_c
 
-    # Show table
-    st.dataframe(df[[label_col, value_col]], use_container_width=True)
+    # Normalize label text for matching
+    labels_norm = df[label_col].astype(str).str.replace("–", "-", regex=False).str.strip()
 
-    # Robust label lookup (works with en-dash/hyphen etc.)
-    def _pick(label: str):
-        if label_col not in df.columns or value_col not in df.columns:
-            return None
-        col_txt = df[label_col].astype(str).str.strip()
-        # normalize dashes
-        target = label.replace("–", "-").strip()
-        match = col_txt.str.replace("–", "-", regex=False).eq(target)
-        m = df.loc[match, value_col]
+    def _pick(regex_pat: str):
+        pat = re.compile(regex_pat, re.IGNORECASE)
+        m = df.loc[labels_norm.apply(lambda x: bool(pat.search(x))), value_col]
         return float(m.iloc[0]) if not m.empty and pd.notna(m.iloc[0]) else None
 
-    total_rev_f   = _pick("Total Revenue – Forecast for month (After VAT)")
-    admin_cost_f  = _pick("Administration Costs – Forecast for month (After VAT / net)")
-    op_profit_f   = _pick("Operating Profit – Forecast for month")
-    op_margin_pct = _pick("Operating Margin % – Forecast for month")
+    # KPI extraction
+    total_rev_f   = (_pick(r"total\s+revenue.*forecast") or
+                     _pick(r"revenue.*forecast.*\(after\s*vat\)") or
+                     _pick(r"total.*forecast.*revenue"))
+    admin_cost_f  = (_pick(r"admin(istration)?\s+costs?.*forecast") or
+                     _pick(r"overhead.*forecast"))
+    op_profit_f   = (_pick(r"operating\s+profit.*forecast") or
+                     _pick(r"op\s*profit.*forecast"))
+    op_margin_pct = (_pick(r"operating\s+margin.*forecast") or
+                     _pick(r"op.*margin.*forecast"))
 
-    # KPI cards
+    # --- Build a nicely formatted display table ---
+    # Heuristic: rows containing 'margin' or '%' are percentages; others are money
+    is_pct = labels_norm.str.contains(r"margin|%", case=False, regex=True)
+    table = df[[label_col, value_col]].copy()
+    table["Value (display)"] = table.apply(
+        lambda r: (f"{(float(r[value_col]) * 100.0 if 0 <= float(r[value_col]) <= 1 else float(r[value_col])):.2f}%"
+                   if is_pct.loc[r.name]
+                   else _fmt_money_space(r[value_col])),
+        axis=1
+    )
+    # Show the display table (label + formatted)
+    st.dataframe(
+        table.rename(columns={label_col: "Metric", value_col: "Value"}),
+        use_container_width=True,
+    )
+
+    # --- KPI cards with formatted numbers ---
     c1, c2, c3, c4 = st.columns(4)
-    if total_rev_f is not None:   c1.metric("Total Revenue (Forecast)", f"${total_rev_f:,.2f}")
-    if admin_cost_f is not None:  c2.metric("Admin Costs (Forecast)", f"${admin_cost_f:,.2f}")
-    if op_profit_f is not None:   c3.metric("Operating Profit (Forecast)", f"${op_profit_f:,.2f}")
-    if op_margin_pct is not None: c4.metric("Operating Margin % (Forecast)", f"{op_margin_pct:.2f}%")
+    if total_rev_f is not None:   c1.metric("Total Revenue (Forecast)", _fmt_money_space(total_rev_f))
+    if admin_cost_f is not None:  c2.metric("Admin Costs (Forecast)", _fmt_money_space(admin_cost_f))
+    if op_profit_f is not None:   c3.metric("Operating Profit (Forecast)", _fmt_money_space(op_profit_f))
+    if op_margin_pct is not None:
+        m = op_margin_pct * 100.0 if 0 <= op_margin_pct <= 1 else op_margin_pct
+        c4.metric("Operating Margin % (Forecast)", f"{m:.2f}%")
 
-    # Simple bar chart
+    # --- Small bar chart (money items only) with formatted tooltip ---
     bars = []
     if total_rev_f is not None:  bars.append(("Total Revenue", total_rev_f))
     if admin_cost_f is not None: bars.append(("Admin Costs", admin_cost_f))
     if op_profit_f is not None:  bars.append(("Operating Profit", op_profit_f))
     if bars:
-        chart_df = pd.DataFrame(bars, columns=["Item", "Value"]).set_index("Item")
-        st.bar_chart(chart_df)
+        chart_df = pd.DataFrame(bars, columns=["Item", "Value"])
+        chart_df["Value_f"] = chart_df["Value"].apply(_fmt_money_space)
+        chart = (
+            alt.Chart(chart_df)
+            .mark_bar()
+            .encode(
+                x=alt.X("Value:Q", title="USD"),
+                y=alt.Y("Item:N", sort="-x"),
+                tooltip=[alt.Tooltip("Item:N"), alt.Tooltip("Value_f:N", title="Value (USD)")]
+            )
+            .properties(width="container", height=120)
+        )
+        st.altair_chart(chart, use_container_width=True)
+
 
 
 
@@ -412,6 +460,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
