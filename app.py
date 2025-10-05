@@ -178,10 +178,42 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
         st.info("P&L_Forecast sheet not found.")
         return
 
-    st.dataframe(df, use_container_width=True)
+    # Handle both exports: sometimes first column is 'Line', sometimes 'Metric'
+    if "Line" in df.columns:
+        label_col = "Line"
+    elif "Metric" in df.columns:
+        label_col = "Metric"
+        # Keep a view with a synthetic 'Line' for downstream text matching
+        df = df.rename(columns={"Metric": "Line"})
+        label_col = "Line"
+    else:
+        st.warning("P&L_Forecast sheet has no 'Line' or 'Metric' column.")
+        st.dataframe(df, use_container_width=True)
+        return
 
+    # Find a numeric value column (prefer 'Value', else take the first numeric-like second column)
+    value_col = "Value" if "Value" in df.columns else None
+    if value_col is None:
+        # try the second column if present
+        if len(df.columns) >= 2:
+            value_col = df.columns[1]
+        else:
+            st.warning("P&L_Forecast sheet has no recognizable value column.")
+            st.dataframe(df, use_container_width=True)
+            return
+
+    # Show table
+    st.dataframe(df[[label_col, value_col]], use_container_width=True)
+
+    # Robust label lookup (works with en-dash/hyphen etc.)
     def _pick(label: str):
-        m = df.loc[df["Line"].astype(str).str.strip().eq(label), "Value"]
+        if label_col not in df.columns or value_col not in df.columns:
+            return None
+        col_txt = df[label_col].astype(str).str.strip()
+        # normalize dashes
+        target = label.replace("–", "-").strip()
+        match = col_txt.str.replace("–", "-", regex=False).eq(target)
+        m = df.loc[match, value_col]
         return float(m.iloc[0]) if not m.empty and pd.notna(m.iloc[0]) else None
 
     total_rev_f   = _pick("Total Revenue – Forecast for month (After VAT)")
@@ -189,12 +221,14 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     op_profit_f   = _pick("Operating Profit – Forecast for month")
     op_margin_pct = _pick("Operating Margin % – Forecast for month")
 
+    # KPI cards
     c1, c2, c3, c4 = st.columns(4)
     if total_rev_f is not None:   c1.metric("Total Revenue (Forecast)", f"${total_rev_f:,.2f}")
     if admin_cost_f is not None:  c2.metric("Admin Costs (Forecast)", f"${admin_cost_f:,.2f}")
     if op_profit_f is not None:   c3.metric("Operating Profit (Forecast)", f"${op_profit_f:,.2f}")
     if op_margin_pct is not None: c4.metric("Operating Margin % (Forecast)", f"{op_margin_pct:.2f}%")
 
+    # Simple bar chart
     bars = []
     if total_rev_f is not None:  bars.append(("Total Revenue", total_rev_f))
     if admin_cost_f is not None: bars.append(("Admin Costs", admin_cost_f))
@@ -330,3 +364,4 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
