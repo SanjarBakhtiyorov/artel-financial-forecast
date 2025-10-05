@@ -219,27 +219,35 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
 import re
 import altair as alt  # ensure this import exists once at top of file
 
+import re
+import altair as alt  # ensure this import exists once at the top
+
 def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     st.markdown("### 💼 P&L Forecast (After VAT)")
 
-    # Accept a few sheet-name variants
-    df = (tables.get("P&L_Forecast")
-          or tables.get("P&L Forecast")
-          or tables.get("PL_Forecast")
-          or tables.get("P&L")
-          or tables.get("PL"))
+    # ---- 1) Find the sheet safely (no DataFrame 'or' chaining) ----
+    sheet_candidates = ["P&L_Forecast", "P&L Forecast", "PL_Forecast", "P&L", "PL"]
+    df = None
+    for k in sheet_candidates:
+        if k in tables and tables[k] is not None and not tables[k].empty:
+            df = tables[k]
+            break
     if df is None or df.empty:
         st.info("P&L_Forecast sheet not found.")
         return
 
+    # ---- 2) Normalize headers ----
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
 
-    # --- detect label/value columns robustly ---
+    # ---- 3) Detect label & value columns robustly ----
     label_candidates = [c for c in df.columns if c.lower() in ("line", "metric", "label", "item", "name")]
-    label_col = label_candidates[0] if label_candidates else (
-        [c for c in df.columns if df[c].dtype == "object"][0] if any(df[c].dtype == "object" for c in df.columns) else df.columns[0]
-    )
+    if label_candidates:
+        label_col = label_candidates[0]
+    else:
+        # first non-numeric column, else first column
+        nonnum = [c for c in df.columns if df[c].dtype == "object"]
+        label_col = nonnum[0] if nonnum else df.columns[0]
 
     value_col = None
     for c in df.columns:
@@ -247,11 +255,11 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
             value_col = c
             break
     if value_col is None:
-        nums = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-        if nums:
-            value_col = nums[0]
+        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        if numeric_cols:
+            value_col = numeric_cols[0]
         else:
-            # coerce best column to numeric
+            # coerce the column with the most numeric entries
             best_c, best_cnt = None, -1
             for c in df.columns:
                 coerced = pd.to_numeric(df[c], errors="coerce")
@@ -265,15 +273,16 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
             df[best_c] = pd.to_numeric(df[best_c], errors="coerce")
             value_col = best_c
 
-    # Normalize label text for matching
+    # ---- 4) Normalize labels for matching ----
     labels_norm = df[label_col].astype(str).str.replace("–", "-", regex=False).str.strip()
 
     def _pick(regex_pat: str):
         pat = re.compile(regex_pat, re.IGNORECASE)
-        m = df.loc[labels_norm.apply(lambda x: bool(pat.search(x))), value_col]
+        mask = labels_norm.apply(lambda x: bool(pat.search(x)))
+        m = df.loc[mask, value_col]
         return float(m.iloc[0]) if not m.empty and pd.notna(m.iloc[0]) else None
 
-    # KPI extraction
+    # ---- 5) Extract KPIs (tolerant regex) ----
     total_rev_f   = (_pick(r"total\s+revenue.*forecast") or
                      _pick(r"revenue.*forecast.*\(after\s*vat\)") or
                      _pick(r"total.*forecast.*revenue"))
@@ -284,23 +293,32 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
     op_margin_pct = (_pick(r"operating\s+margin.*forecast") or
                      _pick(r"op.*margin.*forecast"))
 
-    # --- Build a nicely formatted display table ---
-    # Heuristic: rows containing 'margin' or '%' are percentages; others are money
+    # ---- 6) Display table with financial formatting ----
+    def _fmt_money_space(x) -> str:
+        try:
+            return f"{float(x):,.2f}".replace(",", " ")
+        except Exception:
+            return str(x)
+
     is_pct = labels_norm.str.contains(r"margin|%", case=False, regex=True)
     table = df[[label_col, value_col]].copy()
-    table["Value (display)"] = table.apply(
-        lambda r: (f"{(float(r[value_col]) * 100.0 if 0 <= float(r[value_col]) <= 1 else float(r[value_col])):.2f}%"
-                   if is_pct.loc[r.name]
-                   else _fmt_money_space(r[value_col])),
-        axis=1
-    )
-    # Show the display table (label + formatted)
+    def _fmt_row(i, v):
+        try:
+            v = float(v)
+        except Exception:
+            return str(v)
+        if bool(is_pct.iloc[i]):
+            v = v * 100.0 if 0 <= v <= 1 else v
+            return f"{v:.2f}%"
+        return _fmt_money_space(v)
+
+    table["Value (display)"] = [ _fmt_row(i, v) for i, v in enumerate(table[value_col].values) ]
     st.dataframe(
         table.rename(columns={label_col: "Metric", value_col: "Value"}),
         use_container_width=True,
     )
 
-    # --- KPI cards with formatted numbers ---
+    # ---- 7) KPI tiles with formatting ----
     c1, c2, c3, c4 = st.columns(4)
     if total_rev_f is not None:   c1.metric("Total Revenue (Forecast)", _fmt_money_space(total_rev_f))
     if admin_cost_f is not None:  c2.metric("Admin Costs (Forecast)", _fmt_money_space(admin_cost_f))
@@ -309,7 +327,7 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
         m = op_margin_pct * 100.0 if 0 <= op_margin_pct <= 1 else op_margin_pct
         c4.metric("Operating Margin % (Forecast)", f"{m:.2f}%")
 
-    # --- Small bar chart (money items only) with formatted tooltip ---
+    # ---- 8) Money-only bar chart with formatted tooltip ----
     bars = []
     if total_rev_f is not None:  bars.append(("Total Revenue", total_rev_f))
     if admin_cost_f is not None: bars.append(("Admin Costs", admin_cost_f))
@@ -459,6 +477,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
