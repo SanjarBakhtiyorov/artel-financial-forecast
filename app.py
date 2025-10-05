@@ -3,6 +3,8 @@ import os
 import tempfile
 import datetime as dt
 import streamlit as st
+import pandas as pd
+from typing import Dict
 
 # Backend entrypoint (must be in the repo)
 # def run_analysis(..., prev_month_override=None) -> str
@@ -55,6 +57,132 @@ yoy_mode = st.sidebar.selectbox(
 )
 baseline_month = st.sidebar.text_input("Previous period (YYYY-MM) – optional", value="")
 
+# ---------------------------- ANALYSIS HELPERS (for extra views) ----------------------------
+def _read_report_tables(xlsx_path: str) -> Dict[str, pd.DataFrame]:
+    """Read all sheets from the generated Excel into a dict of DataFrames."""
+    try:
+        xls = pd.ExcelFile(xlsx_path)
+        return {name: xls.parse(name) for name in xls.sheet_names}
+    except Exception as e:
+        st.error(f"Could not load report for charts: {e}")
+        return {}
+
+def _render_revenue_charts(tables: Dict[str, pd.DataFrame], vat_rate: float):
+    st.markdown("### 📈 Revenue: Actual vs Forecast")
+    # Pull values from Summary / Reconciliation
+    actual_excl_cc = None
+    forecast_excl_cc = None
+
+    rec = tables.get("Reconciliation")
+    if rec is not None and {"Metric", "Value"}.issubset(rec.columns):
+        def _pick(metric_key: str):
+            m = rec.loc[rec["Metric"].astype(str).str.strip().eq(metric_key), "Value"]
+            return float(m.iloc[0]) if not m.empty and pd.notna(m.iloc[0]) else None
+        actual_excl_cc   = _pick("Revenue After VAT (excl CC)")
+        forecast_excl_cc = _pick("Forecast (After VAT, excl CC)")
+
+    if actual_excl_cc is None or forecast_excl_cc is None:
+        st.info("Couldn’t find values in Reconciliation sheet – showing Summary fallback.")
+        summary = tables.get("Summary")
+        if summary is not None and {"Metric","Value"}.issubset(summary.columns):
+            actual = summary.loc[summary["Metric"].eq("Revenue After VAT"), "Value"]
+            actual_excl_cc = float(actual.iloc[0]) if not actual.empty else None
+
+    # Chart
+    data = []
+    if actual_excl_cc is not None:
+        data.append(("Actual (After VAT excl CC)", actual_excl_cc))
+    if forecast_excl_cc is not None:
+        data.append(("Forecast (Month-End)", forecast_excl_cc))
+    if data:
+        dfc = pd.DataFrame(data, columns=["Metric", "Value"]).set_index("Metric")
+        st.bar_chart(dfc)
+    else:
+        st.warning("No revenue values available for chart.")
+
+def _render_by_correspondent(tables: Dict[str, pd.DataFrame], vat_rate: float):
+    st.markdown("### 🏭 Top Correspondents (After VAT)")
+    df = tables.get("By_Correspondent")
+    if df is None or df.empty:
+        st.info("By_Correspondent sheet not found.")
+        return
+    # Prefer net_before_vat_usd; convert to After VAT
+    col = "net_before_vat_usd" if "net_before_vat_usd" in df.columns else "gross_amount_usd"
+    work = df.copy()
+    work = work[work["Correspondent"].astype(str) != "CALL_CENTER"]
+    work["after_vat"] = work[col].astype(float) / (1.0 + vat_rate)
+    top10 = (work[["Correspondent", "after_vat"]]
+             .groupby("Correspondent", as_index=False)
+             .sum()
+             .sort_values("after_vat", ascending=False)
+             .head(10)
+             .set_index("Correspondent"))
+    if top10.empty:
+        st.info("No correspondent data to display.")
+        return
+    st.bar_chart(top10)
+
+def _render_warranty_share(tables: Dict[str, pd.DataFrame], vat_rate: float):
+    st.markdown("### 🧩 Warranty Structure (After VAT)")
+    df = tables.get("By_Warranty")
+    if df is None or df.empty:
+        st.info("By_Warranty sheet not found.")
+        return
+    base = df.copy()
+    # amount_usd - g1_transport_usd approximates service part excluding G1 transport
+    amt = "amount_usd" if "amount_usd" in base.columns else None
+    g1  = "g1_transport_usd" if "g1_transport_usd" in base.columns else None
+    if amt is None:
+        st.info("Expected columns not present in By_Warranty.")
+        return
+    base["after_vat"] = (base[amt] - (base[g1] if g1 in base.columns else 0.0)) / (1.0 + vat_rate)
+    base = base[["Warranty", "after_vat"]].groupby("Warranty", as_index=False).sum()
+    base = base[base["after_vat"] > 0]
+    if base.empty:
+        st.info("No positive warranty values.")
+        return
+    # Use a simple normalized bar as a share viz (built-in)
+    total = base["after_vat"].sum()
+    base["Share %"] = (base["after_vat"] / total * 100.0).round(2)
+    st.dataframe(base)
+    st.bar_chart(base.set_index("Warranty")["after_vat"])
+
+def _render_daily_trend(tables: Dict[str, pd.DataFrame]):
+    st.markdown("### 📅 Daily Trend (After VAT excl CC)")
+    df = tables.get("Daily_Revenue")
+    if df is None or df.empty:
+        st.info("Daily_Revenue sheet not found.")
+        return
+    if not {"Date","After VAT (excl CC)"}.issubset(df.columns):
+        st.info("Daily_Revenue does not have expected columns.")
+        return
+    d = df.copy()
+    d = d[pd.to_datetime(d["Date"], errors="coerce").notna()]
+    d = d.sort_values("Date")
+    d = d.set_index("Date")[["After VAT (excl CC)"]]
+    st.line_chart(d)
+
+def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
+    st.markdown("### 📊 YoY Comparison")
+    ym = tables.get("YoY_Monthly")
+    yd = tables.get("YoY_Daily")
+    if ym is not None and not ym.empty:
+        st.write("**Monthly Comparison**")
+        st.dataframe(ym, use_container_width=True)
+    else:
+        st.info("YoY_Monthly sheet not found.")
+    if yd is not None and not yd.empty:
+        st.write("**Daily Comparison**")
+        # Show both series if available
+        cols = [c for c in yd.columns if "After VAT" in c]
+        if "Day" in yd.columns and cols:
+            tmp = yd.copy()
+            tmp = tmp[tmp["Day"].apply(lambda x: isinstance(x, (int, float)))]
+            tmp = tmp.set_index("Day")[cols]
+            st.line_chart(tmp)
+        st.dataframe(yd, use_container_width=True)
+    else:
+        st.info("YoY_Daily sheet not found.")
 
 # ---------------------------- UPLOADS -----------------------------
 st.subheader("📁 Upload SAP Excel (Current Period)")
@@ -137,6 +265,15 @@ if run:
                 file_name=os.path.basename(output_path),
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
+        with open(output_path, "rb") as f:
+            st.download_button(
+                label="⬇️ Download Excel Report",
+                data=f,
+                file_name=os.path.basename(output_path),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
 
 else:
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
