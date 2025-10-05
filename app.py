@@ -5,6 +5,7 @@ import datetime as dt
 import streamlit as st
 import pandas as pd
 from typing import Dict
+import altair as alt
 
 # Backend entrypoint (must be in the repo)
 # def run_analysis(..., prev_month_override=None) -> str
@@ -97,20 +98,54 @@ def _render_by_correspondent(tables: Dict[str, pd.DataFrame], vat_rate: float):
     if df is None or df.empty:
         st.info("By_Correspondent sheet not found.")
         return
-    col = "net_before_vat_usd" if "net_before_vat_usd" in df.columns else "gross_amount_usd"
+
+    # Prefer net before VAT → convert to After VAT
+    val_col = "net_before_vat_usd" if "net_before_vat_usd" in df.columns else "gross_amount_usd"
+
     work = df.copy()
+    # Drop the synthetic CC line
     work = work[work["Correspondent"].astype(str) != "CALL_CENTER"]
-    work["after_vat"] = work[col].astype(float) / (1.0 + vat_rate)
-    top10 = (work[["Correspondent", "after_vat"]]
-             .groupby("Correspondent", as_index=False)
-             .sum()
-             .sort_values("after_vat", ascending=False)
-             .head(10)
-             .set_index("Correspondent"))
-    if top10.empty:
+
+    # Choose display name: use correspondent_name if present, else the numeric ID
+    if "correspondent_name" in work.columns:
+        work["display"] = work["correspondent_name"].fillna(work["Correspondent"].astype(str))
+    else:
+        work["display"] = work["Correspondent"].astype(str)
+
+    # After VAT
+    work["after_vat"] = work[val_col].astype(float) / (1.0 + vat_rate)
+
+    # Aggregate in case multiple IDs share the same display name
+    top = (
+        work.groupby("display", as_index=False)["after_vat"]
+            .sum()
+            .sort_values("after_vat", ascending=False)
+            .head(10)
+    )
+
+    if top.empty:
         st.info("No correspondent data to display.")
         return
-    st.bar_chart(top10)
+
+    # Horizontal bar chart for clearer labels
+    chart = (
+        alt.Chart(top)
+        .mark_bar()
+        .encode(
+            x=alt.X("after_vat:Q", title="After VAT (USD)"),
+            y=alt.Y("display:N", sort="-x", title="Correspondent"),
+            tooltip=[alt.Tooltip("display:N", title="Correspondent"),
+                     alt.Tooltip("after_vat:Q", title="After VAT (USD)", format=",.2f")]
+        )
+        .properties(height=30 * len(top), width="container")
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    # Also show a small table under the chart
+    st.dataframe(
+        top.rename(columns={"display": "Correspondent", "after_vat": "After VAT (USD)"}),
+        use_container_width=True,
+    )
 
 def _render_warranty_share(tables: Dict[str, pd.DataFrame], vat_rate: float):
     st.markdown("### 🧩 Warranty Structure (After VAT)")
@@ -366,6 +401,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
