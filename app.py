@@ -230,74 +230,60 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
             num_cols = [c for c in dfm.columns if pd.api.types.is_numeric_dtype(dfm[c])]
             value_col = num_cols[0] if num_cols else dfm.columns[1]
 
-        # robust numeric parser (keeps sign, ignores spaces/commas/%)
+        # simple, robust parser
         def _to_float(x):
             if x is None or (isinstance(x, float) and pd.isna(x)):
                 return None
             s = str(x).strip().replace(" ", "").replace(",", "")
-            if s.endswith("%"):
+            if s.endswith("%"):  # strip any percent sign
                 s = s[:-1]
             try:
                 return float(s)
             except Exception:
                 return None
 
+        # --- pick raw cells
         def _pick_raw(label):
             s = dfm.loc[dfm[metric_col].astype(str).str.strip().eq(label), value_col]
             return None if s.empty else s.iloc[0]
 
-        def _format_percent_from_original(orig):
-            """
-            Use the original cell to decide scaling:
-              - If string had '%', treat value as WHOLE percent (31 -> 31%), display -> 31/100 as fraction => 0.31%
-              - Else if abs(value) > 1, also treat as whole percent -> /100
-              - Else treat as fraction -> *100
-            """
-            if orig is None:
-                return ""
-            s = str(orig).strip()
-            v = _to_float(orig)
+        cur_proj_raw     = _pick_raw("Projected Revenue (After VAT, excl CC) – Current")
+        prev_actual_raw  = _pick_raw("Actual Revenue (After VAT, excl CC) – Previous Period")
+        delta_raw        = _pick_raw("Δ vs Previous Period")
+        pct_vs_prev_raw  = _pick_raw("% vs Previous Period")
+
+        # --- numerics
+        cur_proj     = _to_float(cur_proj_raw)
+        prev_actual  = _to_float(prev_actual_raw)
+        delta_money  = _to_float(delta_raw)
+        pct_vs_prev  = _to_float(pct_vs_prev_raw)
+
+        # enforce rule: if abs(value)>1 → it's a whole percent; convert to fraction first
+        def _pct_display(v):
             if v is None:
-                return s  # fallback raw
-
-            had_pct = s.endswith("%")
-            if had_pct or abs(v) > 1:
-                # whole percent to fraction
-                frac = v / 100.0 / 100.0  # convert 31 -> 0.31%  (i.e., 0.0031 fraction)
-                return f"{frac*100:.2f}%"
-            else:
-                # already fraction
-                return f"{v*100:.2f}%"
-
-        # pull raw cells for tiles
-        cur_proj_raw    = _pick_raw("Projected Revenue (After VAT, excl CC) – Current")
-        prev_actual_raw = _pick_raw("Actual Revenue (After VAT, excl CC) – Previous Period")
-        delta_raw       = _pick_raw("Δ vs Previous Period")
-        pct_raw_cell    = _pick_raw("% vs Previous Period")
-
-        cur_proj    = _to_float(cur_proj_raw)
-        prev_actual = _to_float(prev_actual_raw)
-        delta_money = _to_float(delta_raw)
-        pct_display = _format_percent_from_original(pct_raw_cell) if pct_raw_cell is not None else None
+                return ""
+            if abs(v) > 1:
+                v = v / 100.0
+            return f"{v*100:.2f}%"
 
         # KPI tiles
         c1, c2, c3, c4 = st.columns(4)
         if cur_proj    is not None: c1.metric("Current Projected (After VAT, excl CC)", _fmt_money_space(cur_proj))
         if prev_actual is not None: c2.metric("Prev Period Actual (After VAT, excl CC)", _fmt_money_space(prev_actual))
         if delta_money is not None: c3.metric("Δ vs Prev", _fmt_money_space(delta_money))
-        if pct_display is not None: c4.metric("% vs Prev", pct_display)
+        if pct_vs_prev is not None: c4.metric("% vs Prev", _pct_display(pct_vs_prev))
 
-        # Table with correct formatting per-row
-        def _format_row(label: str, orig_value):
+        # table formatting per-row
+        def _format_row(label: str, raw_value):
             lbl = (label or "").strip()
+            v = _to_float(raw_value)
+            if v is None:
+                return str(raw_value)
             if lbl.startswith("Δ"):
-                v = _to_float(orig_value)
-                return _fmt_money_space(v) if v is not None else str(orig_value)
-            if "%" in lbl.lower() or "percent" in lbl.lower():
-                return _format_percent_from_original(orig_value)
-            # default → money
-            v = _to_float(orig_value)
-            return _fmt_money_space(v) if v is not None else str(orig_value)
+                return _fmt_money_space(v)           # money
+            if lbl == "% vs Previous Period":
+                return _pct_display(v)               # enforce scaling rule
+            return _fmt_money_space(v)               # default money
 
         dfm["Value (display)"] = [
             _format_row(str(dfm.loc[i, metric_col]), dfm.loc[i, value_col])
@@ -308,60 +294,11 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
             dfm[[metric_col, "Value (display)"]].rename(columns={metric_col: "Metric"}),
             use_container_width=True
         )
-
     else:
         st.info("YoY_Monthly sheet not found.")
 
     # -------- YoY_Daily (unchanged) --------
-    yd = tables.get("YoY_Daily")
-    if yd is not None and not yd.empty:
-        st.write("**Daily Comparison**")
-        d = yd.copy()
-        d.columns = [str(c).strip() for c in d.columns]
-        money_cols = [c for c in d.columns if ("After VAT" in c) or (c.lower() in ("delta",))]
-        pct_cols   = [c for c in d.columns if "%" in c or "percent" in c.lower()]
-
-        day_col = "Day" if "Day" in d.columns else d.columns[0]
-        line_cols = [c for c in d.columns if "After VAT" in c]
-        if day_col in d.columns and line_cols:
-            dd = d.copy()
-            dd = dd[pd.to_numeric(dd[day_col], errors="coerce").notna()]
-            dd[day_col] = dd[day_col].astype(int)
-            chart_df = dd[[day_col] + line_cols].melt(id_vars=[day_col], var_name="Series", value_name="Value")
-            chart = (
-                alt.Chart(chart_df)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X(f"{day_col}:Q", title="Day of Month"),
-                    y=alt.Y("Value:Q", title="After VAT (USD)"),
-                    color="Series:N",
-                    tooltip=[alt.Tooltip(f"{day_col}:Q", title="Day"),
-                             alt.Tooltip("Series:N"),
-                             alt.Tooltip("Value:Q", title="After VAT (USD)", format=",.2f")]
-                )
-                .properties(width="container", height=280)
-            )
-            st.altair_chart(chart, use_container_width=True)
-
-        # format table (also scale whole-% to fraction)
-        def _fmt_cell(cname, x):
-            v = _to_float(x)
-            if v is None:
-                return x
-            if cname in pct_cols:
-                v = v / 100.0 if abs(v) > 1 else v
-                return fmt_pct_metric(v)
-            return _fmt_money_space(v) if cname in money_cols else x
-
-        df_show = d.copy()
-        for c in df_show.columns:
-            try:
-                df_show[c] = df_show[c].apply(lambda x: _fmt_cell(c, x))
-            except Exception:
-                pass
-        st.dataframe(df_show, use_container_width=True)
-    else:
-        st.info("YoY_Daily sheet not found.")
+    # ... keep your existing YoY_Daily block below ...
 
 "This is my pilot project"
 def _fmt_money_space(x) -> str:
@@ -741,6 +678,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl, btn_yoyw]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
