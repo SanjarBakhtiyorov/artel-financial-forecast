@@ -212,35 +212,108 @@ def _render_daily_trend(tables: Dict[str, pd.DataFrame]):
     d = d.set_index("Date")[["After VAT (excl CC)"]]
     st.line_chart(d)
 
+import altair as alt
+
 def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
     st.markdown("### 📊 YoY Comparison")
+
+    # -------- YoY_Monthly --------
     ym = tables.get("YoY_Monthly")
-    yd = tables.get("YoY_Daily")
     if ym is not None and not ym.empty:
-        st.write("**Monthly Comparison**")
-        st.dataframe(ym, use_container_width=True)
+        dfm = ym.copy()
+        dfm.columns = [str(c).strip() for c in dfm.columns]
+
+        # Expect columns: Metric | Value
+        metric_col = "Metric" if "Metric" in dfm.columns else dfm.columns[0]
+        value_col  = "Value"  if "Value"  in dfm.columns else (
+            [c for c in dfm.columns if pd.api.types.is_numeric_dtype(dfm[c])][0]
+            if any(pd.api.types.is_numeric_dtype(dfm[c]) for c in dfm.columns) else dfm.columns[1]
+        )
+
+        # Extract KPIs for tiles
+        def _pick(label):
+            s = dfm.loc[dfm[metric_col].astype(str).str.strip().eq(label), value_col]
+            return float(s.iloc[0]) if not s.empty and pd.notna(s.iloc[0]) else None
+
+        cur_proj   = _pick("Projected Revenue (After VAT, excl CC) – Current")
+        prev_actual= _pick("Actual Revenue (After VAT, excl CC) – Previous Period")
+        delta      = _pick("Δ vs Previous Period")
+        pct        = _pick("% vs Previous Period")  # already percent-like
+
+        c1, c2, c3, c4 = st.columns(4)
+        if cur_proj   is not None: c1.metric("Current Projected (After VAT, excl CC)", _fmt_money_space(cur_proj))
+        if prev_actual is not None: c2.metric("Prev Period Actual (After VAT, excl CC)", _fmt_money_space(prev_actual))
+        if delta      is not None: c3.metric("Δ vs Prev", _fmt_money_space(delta))
+        if pct        is not None: c4.metric("% vs Prev", fmt_pct_metric(pct))
+
+        # Show table with a single formatted column
+        dfm["Value (display)"] = [
+            fmt_pct_metric(v) if str(dfm.loc[i, metric_col]).strip().startswith("%")
+                                 or " % " in str(dfm.loc[i, metric_col])
+                                 or str(dfm.loc[i, metric_col]).strip().startswith("%")
+                                 or "vs Previous" in str(dfm.loc[i, metric_col])
+            else _fmt_money_space(v)
+            for i, v in enumerate(dfm[value_col].values)
+        ]
+        st.dataframe(dfm[[metric_col, "Value (display)"]].rename(columns={metric_col: "Metric"}),
+                     use_container_width=True)
     else:
         st.info("YoY_Monthly sheet not found.")
+
+    # -------- YoY_Daily --------
+    yd = tables.get("YoY_Daily")
     if yd is not None and not yd.empty:
         st.write("**Daily Comparison**")
-        cols = [c for c in yd.columns if "After VAT" in c]
-        if "Day" in yd.columns and cols:
-            tmp = yd.copy()
-            tmp = tmp[tmp["Day"].apply(lambda x: isinstance(x, (int, float)))]
-            tmp = tmp.set_index("Day")[cols]
-            st.line_chart(tmp)
-        st.dataframe(yd, use_container_width=True)
+
+        d = yd.copy()
+        d.columns = [str(c).strip() for c in d.columns]
+
+        # Identify money & percent columns
+        money_cols = [c for c in d.columns if ("After VAT" in c) or (c.lower() in ("delta",))]
+        pct_cols   = [c for c in d.columns if "%" in c or "vs" in c.lower()]
+
+        # Chart (lines)
+        day_col = "Day" if "Day" in d.columns else d.columns[0]
+        line_cols = [c for c in d.columns if "After VAT" in c]
+        if day_col in d.columns and line_cols:
+            dd = d.copy()
+            # filter only numeric day rows
+            dd = dd[pd.to_numeric(dd[day_col], errors="coerce").notna()]
+            dd[day_col] = dd[day_col].astype(int)
+            chart_df = dd[[day_col] + line_cols].melt(id_vars=[day_col], var_name="Series", value_name="Value")
+            chart = (
+                alt.Chart(chart_df)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X(f"{day_col}:Q", title="Day of Month"),
+                    y=alt.Y("Value:Q", title="After VAT (USD)"),
+                    color="Series:N",
+                    tooltip=[alt.Tooltip(f"{day_col}:Q", title="Day"),
+                             alt.Tooltip("Series:N"),
+                             alt.Tooltip("Value:Q", title="After VAT (USD)", format=",.2f")]
+                )
+                .properties(width="container", height=280)
+            )
+            st.altair_chart(chart, use_container_width=True)
+
+        # Formatted table
+        df_show = d.copy()
+        # Money formatting
+        for c in money_cols:
+            try:
+                df_show[c] = df_show[c].apply(_fmt_money_space)
+            except Exception:
+                pass
+        # Percent formatting (these are already ratios/percents in sheet)
+        for c in pct_cols:
+            try:
+                df_show[c] = df_show[c].apply(fmt_pct_metric)
+            except Exception:
+                pass
+
+        st.dataframe(df_show, use_container_width=True)
     else:
         st.info("YoY_Daily sheet not found.")
-
-import re
-import altair as alt  # ensure this import exists once at top of file
-
-import re
-import altair as alt  # ensure this import exists once at the top
-
-import re
-import altair as alt  # keep import at top once
 
 def _fmt_money_space(x) -> str:
     """Format 12345.6 -> '12 345.60' with spaces as thousands separator."""
@@ -529,6 +602,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
