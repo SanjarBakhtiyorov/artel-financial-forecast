@@ -470,7 +470,92 @@ def _render_pl_forecast(tables: Dict[str, pd.DataFrame]):
         st.dataframe(ratio_df, use_container_width=True)
     else:
         st.info("No ratios could be computed from this P&L sheet.")
+def _render_yoy_warranty(tables: Dict[str, pd.DataFrame]):
+    st.markdown("### 🧩 YoY Warranty Mix (Pie)")
 
+    df = tables.get("YoY_Warranty")
+    if df is None or df.empty:
+        st.info("YoY_Warranty sheet not found.")
+        return
+
+    # Normalize columns
+    d = df.copy()
+    d.columns = [str(c).strip() for c in d.columns]
+
+    # Keep only G1/G2/G3 (drop TOTAL or others if present)
+    d = d[d["Warranty"].isin(["G1", "G2", "G3"])]
+
+    # Expected columns in export (we’ll be tolerant)
+    amt_cur   = "Current After VAT (excl CC)"
+    amt_proj  = "Current Projected After VAT (excl CC)"
+    amt_prev  = "PrevYear After VAT (excl CC)"
+    sh_cur    = "Current Share % (Actual)"
+    sh_proj   = "Current Share % (Projected)"
+    sh_prev   = "PrevYear Share %"
+
+    # If share columns are missing, compute from amounts
+    def ensure_shares(df_in, amt_col, share_col):
+        out = df_in.copy()
+        if share_col not in out.columns:
+            total = out[amt_col].sum(skipna=True)
+            out[share_col] = np.where(
+                total != 0, (out[amt_col] / total) * 100.0, np.nan
+            )
+        return out
+
+    for (a, s) in [(amt_cur, sh_cur), (amt_proj, sh_proj), (amt_prev, sh_prev)]:
+        if a in d.columns:
+            d = ensure_shares(d, a, s)
+
+    # Helper to prepare a pie dataset
+    def make_pie(df_in, value_col, share_col, title):
+        if value_col not in df_in.columns or share_col not in df_in.columns:
+            return None, None
+        tmp = df_in[["Warranty", value_col, share_col]].copy()
+        tmp = tmp.rename(columns={value_col: "Amount", share_col: "Share"})
+        tmp["Amount_f"] = tmp["Amount"].apply(_fmt_money_space)
+        tmp["Share_f"]  = tmp["Share"].apply(fmt_pct_metric)  # metric-style: don’t double *100 if already %
+        tmp["Title"] = title
+        return tmp, title
+
+    cur_pie,  cur_title  = make_pie(d, amt_cur,  sh_cur,  "Current – Actual")
+    proj_pie, proj_title = make_pie(d, amt_proj, sh_proj, "Current – Projected")
+    prev_pie, prev_title = make_pie(d, amt_prev, sh_prev, "Previous Year – Actual")
+
+    # At least one view must exist
+    pies = [(cur_pie, cur_title), (proj_pie, proj_title), (prev_pie, prev_title)]
+    pies = [(p, t) for (p, t) in pies if p is not None]
+    if not pies:
+        st.warning("YoY_Warranty: columns not found to build pies.")
+        st.dataframe(d, use_container_width=True)
+        return
+
+    # Render up to three pies in a row
+    cols = st.columns(len(pies))
+    for (col, (data, title)) in zip(cols, pies):
+        with col:
+            st.caption(f"**{title}**")
+            chart = (
+                alt.Chart(data)
+                .mark_arc()
+                .encode(
+                    theta=alt.Theta("Share:Q", title="Share", stack=True),
+                    color=alt.Color("Warranty:N", title="Warranty"),
+                    tooltip=[
+                        alt.Tooltip("Warranty:N"),
+                        alt.Tooltip("Share_f:N",  title="Share"),
+                        alt.Tooltip("Amount_f:N", title="Amount (USD)"),
+                    ],
+                )
+                .properties(width="container", height=260)
+            )
+            st.altair_chart(chart, use_container_width=True)
+
+            # Small formatted table under each pie
+            tbl = data[["Warranty", "Share_f", "Amount_f"]].rename(
+                columns={"Share_f": "Share", "Amount_f": "Amount (USD)"}
+            )
+            st.dataframe(tbl, use_container_width=True)
 
 
 
@@ -570,13 +655,15 @@ if st.session_state.get("report_ready") and st.session_state.get("report_path"):
 st.markdown("---")
 st.subheader("📊 Additional Analysis Views")
 
-col_a, col_b, col_c, col_d, col_e, col_f = st.columns(6)
-btn_rev   = col_a.button("📈 Revenue Charts",     key="btn_rev")
-btn_corr  = col_b.button("🏭 By Correspondent",   key="btn_corr")
-btn_warr  = col_c.button("🧩 Warranty Structure", key="btn_warr")
-btn_daily = col_d.button("📅 Daily Trend",        key="btn_daily")
-btn_yoy   = col_e.button("📊 YoY Compare",        key="btn_yoy")
-btn_pl    = col_f.button("💼 P&L",                key="btn_pl")
+# Replace with 7 columns to add the new button:
+col_a, col_b, col_c, col_d, col_e, col_f, col_g = st.columns(7)
+btn_rev   = col_a.button("📈 Revenue Charts",       key="btn_rev")
+btn_corr  = col_b.button("🏭 By Correspondent",     key="btn_corr")
+btn_warr  = col_c.button("🧩 Warranty Structure",   key="btn_warr")
+btn_daily = col_d.button("📅 Daily Trend",          key="btn_daily")
+btn_yoy   = col_e.button("📊 YoY Compare",          key="btn_yoy")
+btn_pl    = col_f.button("💼 P&L",                  key="btn_pl")
+btn_yoyw  = col_g.button("🧩 YoY Warranty (Pie)",   key="btn_yoyw")
 
 if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
     rp = st.session_state.get("report_path")
@@ -598,10 +685,14 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl]):
             _render_yoy_views(tables)
         if btn_pl:
             _render_pl_forecast(tables)
+        if btn_yoyw:
+            _render_yoy_warranty(tables)
+
 
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
