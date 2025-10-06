@@ -384,9 +384,6 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
             st.dataframe(show, use_container_width=True)
     else:
         st.info("YoY_Daily sheet not found.")
-
-
-
         money_cols = [c for c in d.columns if ("After VAT" in c) or (c.lower() == "delta")]
         pct_cols   = [c for c in d.columns if "%" in c or "percent" in c.lower() or "vs" in c.lower()]
 
@@ -410,7 +407,6 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
     else:
         st.info("YoY_Daily sheet not found.")
 
-"This is my pilot project"
 def _fmt_money_space(x) -> str:
     """Format 12345.6 -> '12 345.60' with spaces as thousands separator."""
     try:
@@ -788,6 +784,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl, btn_yoyw]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
