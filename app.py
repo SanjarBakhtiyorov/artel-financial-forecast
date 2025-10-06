@@ -306,55 +306,55 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
 
     # -------------------- YoY_Daily --------------------
     # -------- YoY_Daily (recalculate ratio robustly) --------
-yd = tables.get("YoY_Daily")
-if yd is not None and not yd.empty:
-    st.write("**Daily Comparison**")
-
-    d = yd.copy()
-    d.columns = [str(c).strip() for c in d.columns]
-
-    # Identify columns
-    day_col = "Day" if "Day" in d.columns else d.columns[0]
-    cur_col = next((c for c in d.columns if c.lower().startswith("current") and "after vat" in c.lower()), None)
-    prev_col = next((c for c in d.columns if (c.lower().startswith("prev") or "prevyear" in c.lower()) and "after vat" in c.lower()), None)
-    pct_col = next((c for c in d.columns if "%" in c or "vs prev" in c.lower()), None)  # original percent col (we'll ignore)
-
-    if cur_col is None or prev_col is None:
-        st.dataframe(d, use_container_width=True)
-    else:
-        # Ensure numeric & sort by day
-        d[day_col] = pd.to_numeric(d[day_col], errors="coerce")
-        d[cur_col] = pd.to_numeric(d[cur_col], errors="coerce")
-        d[prev_col] = pd.to_numeric(d[prev_col], errors="coerce")
-        d = d.sort_values(day_col)
-
-        # Recalculate ratio safely: (current - prev) / prev ; if prev is ~0 -> NaN
-        eps = 1e-6
-        ratio = (d[cur_col] - d[prev_col]) / d[prev_col].where(d[prev_col].abs() > eps, np.nan)
-        d["% vs Prev (recalc)"] = ratio
-
-        # Build chart dataset
-        line_cols = [c for c in [cur_col, prev_col] if c in d.columns]
-        if d[day_col].notna().any() and line_cols:
-            dd = d.dropna(subset=[day_col])
-            dd[day_col] = dd[day_col].astype(int)
-            chart_df = dd[[day_col] + line_cols].melt(id_vars=[day_col], var_name="Series", value_name="Value")
-            chart = (
-                alt.Chart(chart_df)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X(f"{day_col}:Q", title="Day of Month"),
-                    y=alt.Y("Value:Q", title="After VAT (USD)"),
-                    color="Series:N",
-                    tooltip=[
-                        alt.Tooltip(f"{day_col}:Q", title="Day"),
-                        alt.Tooltip("Series:N"),
-                        alt.Tooltip("Value:Q", title="After VAT (USD)", format=",.2f"),
-                    ],
+    yd = tables.get("YoY_Daily")
+    if yd is not None and not yd.empty:
+        st.write("**Daily Comparison**")
+    
+        d = yd.copy()
+        d.columns = [str(c).strip() for c in d.columns]
+    
+        # Identify columns
+        day_col = "Day" if "Day" in d.columns else d.columns[0]
+        cur_col = next((c for c in d.columns if c.lower().startswith("current") and "after vat" in c.lower()), None)
+        prev_col = next((c for c in d.columns if (c.lower().startswith("prev") or "prevyear" in c.lower()) and "after vat" in c.lower()), None)
+        pct_col = next((c for c in d.columns if "%" in c or "vs prev" in c.lower()), None)  # original percent col (we'll ignore)
+    
+        if cur_col is None or prev_col is None:
+            st.dataframe(d, use_container_width=True)
+        else:
+            # Ensure numeric & sort by day
+            d[day_col] = pd.to_numeric(d[day_col], errors="coerce")
+            d[cur_col] = pd.to_numeric(d[cur_col], errors="coerce")
+            d[prev_col] = pd.to_numeric(d[prev_col], errors="coerce")
+            d = d.sort_values(day_col)
+    
+            # Recalculate ratio safely: (current - prev) / prev ; if prev is ~0 -> NaN
+            eps = 1e-6
+            ratio = (d[cur_col] - d[prev_col]) / d[prev_col].where(d[prev_col].abs() > eps, np.nan)
+            d["% vs Prev (recalc)"] = ratio
+    
+            # Build chart dataset
+            line_cols = [c for c in [cur_col, prev_col] if c in d.columns]
+            if d[day_col].notna().any() and line_cols:
+                dd = d.dropna(subset=[day_col])
+                dd[day_col] = dd[day_col].astype(int)
+                chart_df = dd[[day_col] + line_cols].melt(id_vars=[day_col], var_name="Series", value_name="Value")
+                chart = (
+                    alt.Chart(chart_df)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X(f"{day_col}:Q", title="Day of Month"),
+                        y=alt.Y("Value:Q", title="After VAT (USD)"),
+                        color="Series:N",
+                        tooltip=[
+                            alt.Tooltip(f"{day_col}:Q", title="Day"),
+                            alt.Tooltip("Series:N"),
+                            alt.Tooltip("Value:Q", title="After VAT (USD)", format=",.2f"),
+                        ],
+                    )
+                    .properties(width="container", height=280)
                 )
-                .properties(width="container", height=280)
-            )
-            st.altair_chart(chart, use_container_width=True)
+                st.altair_chart(chart, use_container_width=True)
 
         # Format for table:
         show = d[[day_col, cur_col, prev_col, "% vs Prev (recalc)"]].copy()
@@ -777,6 +777,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl, btn_yoyw]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
