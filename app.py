@@ -372,8 +372,8 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
             }),
             use_container_width=True,
         )
-else:
-    st.info("YoY_Daily sheet not found.")
+            else:
+                st.info("YoY_Daily sheet not found.")
 
 
         money_cols = [c for c in d.columns if ("After VAT" in c) or (c.lower() == "delta")]
@@ -777,6 +777,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl, btn_yoyw]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
