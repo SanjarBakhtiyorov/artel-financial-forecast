@@ -259,8 +259,8 @@ def _render_yoy_views(tables: Dict[str, pd.DataFrame]):
             v = float(v)
             # If the sheet gives “-31”, treat as whole percent -> -31% (fraction -0.31)
             if abs(v) > 1:
-                v = v / 100.0
-            return f"{v:.2f}*100"
+                v = v / 100.0*100
+            return f"{v:.2f}"
 
         def _pick_raw(label):
             s = dfm.loc[dfm[metric_col].astype(str).str.strip().eq(label), value_col]
@@ -736,6 +736,7 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl, btn_yoyw]):
 # ---------------------------- FOOTER ----------------------------
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
 
