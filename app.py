@@ -70,7 +70,7 @@ def fmt_pct_metric(x) -> str:
     try:
         v = float(x)
         if -1.0 <= v <= 1.0:
-            v *= 100.0
+            v *= 1
         return f"{v:.2f}%"
     except Exception:
         return str(x)
@@ -749,4 +749,5 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl, btn_yoyw]):
 # ============================ FOOTER =============================
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
