@@ -57,7 +57,7 @@ def fmt_money(x) -> str:
 def fmt_pct_ratio(x) -> str:
     """Treat x as ratio (e.g., 0.23 -> 23.00%)."""
     try:
-        return f"{float(x) * 100:.2f}%"
+        return f"{float(x):.2f}%"
     except Exception:
         return str(x)
 
@@ -70,7 +70,7 @@ def fmt_pct_metric(x) -> str:
     try:
         v = float(x)
         if -1.0 <= v <= 1.0:
-            v *= 1
+            v *= 100.0
         return f"{v:.2f}%"
     except Exception:
         return str(x)
@@ -749,5 +749,6 @@ if any([btn_rev, btn_corr, btn_warr, btn_daily, btn_yoy, btn_pl, btn_yoyw]):
 # ============================ FOOTER =============================
 if not st.session_state.get("report_ready"):
     st.info("👆 Upload your SAP Excel file(s), adjust settings in the sidebar, then click **Run Forecast**.")
+
 
 
